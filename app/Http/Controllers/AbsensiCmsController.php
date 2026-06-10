@@ -26,13 +26,15 @@ class AbsensiCmsController extends Controller
         $data = $request->validate([
             'username' => ['required', 'string'],
             'password' => ['required', 'string'],
+            'skpd_id' => ['nullable', 'integer', 'min:1'],
             'redact' => ['nullable', 'boolean'],
         ]);
 
         $result = $this->scraper->scrapeCuti(
             $data['username'],
             $data['password'],
-            $request->boolean('redact', true)
+            $request->boolean('redact', true),
+            (int) ($data['skpd_id'] ?? 1)
         );
 
         return view('absensi-cms.index', [

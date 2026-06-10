@@ -16,7 +16,8 @@ class AbsensiScraperService
 {
     private const DEFAULT_BASE_URL = 'https://absensi.banjarmasinkota.go.id';
     private const DEFAULT_COOKIE_SESSION_KEY = 'absensi_scraper.cookies';
-    private const CUTI_PATH = '/superadmin/cuti';
+    private const DEFAULT_SKPD_ID = 1;
+    private const ADMIN_CUTI_PATH = '/admin/cuti';
     private const SENSITIVE_HEADER_KEYWORDS = ['nip', 'nama', 'pegawai', 'nik', 'alamat', 'telepon', 'hp', 'email'];
 
     private Client $client;
@@ -52,7 +53,7 @@ class AbsensiScraperService
         ]);
     }
 
-    public function login(string $username, string $password): array
+    public function login(string $username, string $password, int $skpdId = self::DEFAULT_SKPD_ID): array
     {
         $loginPage = $this->request('GET', '/');
         $html = (string) $loginPage->getBody();
@@ -71,6 +72,7 @@ class AbsensiScraperService
         ]);
 
         $body = (string) $response->getBody();
+        $skpdLogin = $this->loginAsSkpd($skpdId);
         $cutiPage = $this->getCutiPage();
         $success = (bool) ($cutiPage['success'] ?? false);
 
@@ -87,14 +89,15 @@ class AbsensiScraperService
                 'redirect_history' => $this->redirectHistory($response),
                 'body_preview' => $this->preview($body),
             ],
+            'skpd_login' => $skpdLogin,
             'cuti_page' => $cutiPage,
             'cookies_count' => count($this->cookieJar->toArray()),
         ];
     }
 
-    public function scrapeCuti(string $username, string $password, bool $redact = true): array
+    public function scrapeCuti(string $username, string $password, bool $redact = true, int $skpdId = self::DEFAULT_SKPD_ID): array
     {
-        $login = $this->login($username, $password);
+        $login = $this->login($username, $password, $skpdId);
 
         if (! ($login['success'] ?? false)) {
             return [
@@ -104,10 +107,10 @@ class AbsensiScraperService
             ];
         }
 
-        return $this->getCutiData($redact);
+        return $this->getCutiData($redact, $skpdId);
     }
 
-    public function getCutiData(bool $redact = true): array
+    public function getCutiData(bool $redact = true, int $skpdId = self::DEFAULT_SKPD_ID): array
     {
         $page = $this->getCutiPage();
 
@@ -122,7 +125,8 @@ class AbsensiScraperService
         $body = is_string($page['body'] ?? null) ? (string) $page['body'] : '';
         $parsed = $this->parseCutiHtml($body, $redact);
         $this->saveCutiData($parsed, [
-            'path' => self::CUTI_PATH,
+            'path' => self::ADMIN_CUTI_PATH,
+            'skpd_id' => $skpdId,
             'fetched_at' => now()->toISOString(),
             'redacted' => $redact,
         ]);
@@ -130,7 +134,7 @@ class AbsensiScraperService
         return [
             'success' => true,
             'page' => [
-                'path' => self::CUTI_PATH,
+                'path' => self::ADMIN_CUTI_PATH,
                 'status_code' => $page['status_code'],
                 'redirect_history' => $page['redirect_history'],
                 'body_preview' => $page['body_preview'],
@@ -139,14 +143,29 @@ class AbsensiScraperService
         ];
     }
 
+    public function loginAsSkpd(int $skpdId = self::DEFAULT_SKPD_ID): array
+    {
+        $path = $this->skpdLoginPath($skpdId);
+        $response = $this->request('GET', $path);
+        $body = (string) $response->getBody();
+
+        return [
+            'success' => ! $this->isLoginPage($body) && $response->getStatusCode() < 400,
+            'path' => $path,
+            'status_code' => $response->getStatusCode(),
+            'redirect_history' => $this->redirectHistory($response),
+            'body_preview' => $this->preview($body),
+        ];
+    }
+
     public function getCutiPage(): array
     {
-        $response = $this->request('GET', self::CUTI_PATH);
+        $response = $this->request('GET', self::ADMIN_CUTI_PATH);
         $body = (string) $response->getBody();
 
         return [
             'success' => ! $this->isLoginPage($body) && $response->getStatusCode() === 200,
-            'path' => self::CUTI_PATH,
+            'path' => self::ADMIN_CUTI_PATH,
             'status_code' => $response->getStatusCode(),
             'redirect_history' => $this->redirectHistory($response),
             'body' => $body,
@@ -156,7 +175,7 @@ class AbsensiScraperService
 
     protected function parseCutiHtml(string $html, bool $redact): array
     {
-        $crawler = $this->createCrawler($html, $this->baseUrl . self::CUTI_PATH);
+        $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_CUTI_PATH);
         $title = trim($crawler->filter('title')->first()->text(''));
         $tables = [];
 
@@ -312,6 +331,11 @@ class AbsensiScraperService
 
             throw $throwable;
         }
+    }
+
+    protected function skpdLoginPath(int $skpdId): string
+    {
+        return '/superadmin/skpd/' . max(1, $skpdId) . '/';
     }
 
     protected function logHttpExchange(string $method, string $uri, ResponseInterface $response): void

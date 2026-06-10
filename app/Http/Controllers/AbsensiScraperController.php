@@ -20,8 +20,8 @@ class AbsensiScraperController extends Controller
             'status' => 'ready',
             'endpoints' => [
                 'GET /absensi-scraper',
-                'POST /absensi-scraper/login',
-                'POST /absensi-scraper/cuti',
+                'POST /absensi-scraper/login { username, password, skpd_id? }',
+                'POST /absensi-scraper/cuti { username?, password?, skpd_id?, redact? }',
             ],
         ]);
     }
@@ -31,10 +31,11 @@ class AbsensiScraperController extends Controller
         $data = $request->validate([
             'username' => ['required', 'string'],
             'password' => ['required', 'string'],
+            'skpd_id' => ['nullable', 'integer', 'min:1'],
         ]);
 
         return response()->json(
-            $this->scraper->login($data['username'], $data['password'])
+            $this->scraper->login($data['username'], $data['password'], (int) ($data['skpd_id'] ?? 1))
         );
     }
 
@@ -43,19 +44,21 @@ class AbsensiScraperController extends Controller
         $data = $request->validate([
             'username' => ['nullable', 'string'],
             'password' => ['nullable', 'string'],
+            'skpd_id' => ['nullable', 'integer', 'min:1'],
             'redact' => ['nullable', 'boolean'],
         ]);
 
         $redact = $request->boolean('redact', true);
+        $skpdId = (int) ($data['skpd_id'] ?? 1);
 
         if (! empty($data['username']) && ! empty($data['password'])) {
             return response()->json(
-                $this->scraper->scrapeCuti($data['username'], $data['password'], $redact)
+                $this->scraper->scrapeCuti($data['username'], $data['password'], $redact, $skpdId)
             );
         }
 
         return response()->json(
-            $this->scraper->getCutiData($redact)
+            $this->scraper->getCutiData($redact, $skpdId)
         );
     }
 }

@@ -99,6 +99,9 @@
                             <i data-lucide="clock-3" class="h-5 w-5 text-amber-600"></i>
                         </div>
                         <p class="mt-3 break-words text-sm font-semibold text-zinc-800">{{ $meta['fetched_at'] ?? 'Belum ada data' }}</p>
+                        @if (isset($meta['skpd_id']))
+                            <p class="mt-1 text-xs text-zinc-500">SKPD ID {{ $meta['skpd_id'] }} - {{ $meta['path'] ?? '/admin/cuti' }}</p>
+                        @endif
                     </div>
                 </div>
 
@@ -133,6 +136,10 @@
 
                         <label class="mt-4 block text-sm font-medium text-zinc-700" for="password">Password</label>
                         <input id="password" name="password" type="password" required
+                            class="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100">
+
+                        <label class="mt-4 block text-sm font-medium text-zinc-700" for="skpd_id">SKPD ID</label>
+                        <input id="skpd_id" name="skpd_id" type="number" min="1" value="{{ old('skpd_id', 1) }}" required
                             class="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100">
 
                         <label class="mt-4 flex items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm text-zinc-700">
