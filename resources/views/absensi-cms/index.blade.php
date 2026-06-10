@@ -126,7 +126,25 @@
 
                         @if (is_array($result) && ($result['success'] ?? false) === false)
                             <div class="mt-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                                {{ $result['message'] ?? 'Fetch gagal. Periksa kredensial atau akses halaman cuti.' }}
+                                <div>{{ $result['message'] ?? 'Fetch gagal. Periksa kredensial atau akses halaman cuti.' }}</div>
+                                @php
+                                    $loginInfo = $result['login'] ?? [];
+                                    $skpdInfo = $loginInfo['skpd_login'] ?? [];
+                                    $cutiInfo = $loginInfo['cuti_page'] ?? ($result['page'] ?? []);
+                                @endphp
+                                @if (is_array($loginInfo) || is_array($skpdInfo) || is_array($cutiInfo))
+                                    <div class="mt-2 space-y-1 text-xs text-rose-600">
+                                        @if (isset($loginInfo['login']['status_code']))
+                                            <div>Login: HTTP {{ $loginInfo['login']['status_code'] }}</div>
+                                        @endif
+                                        @if (isset($skpdInfo['path']))
+                                            <div>SKPD: {{ $skpdInfo['path'] }} - HTTP {{ $skpdInfo['status_code'] ?? '-' }} ({{ $skpdInfo['action']['source'] ?? 'unknown' }})</div>
+                                        @endif
+                                        @if (isset($cutiInfo['path']))
+                                            <div>Cuti: {{ $cutiInfo['path'] }} - HTTP {{ $cutiInfo['status_code'] ?? '-' }}</div>
+                                        @endif
+                                    </div>
+                                @endif
                             </div>
                         @endif
 

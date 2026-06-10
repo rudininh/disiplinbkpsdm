@@ -143,16 +143,26 @@ class AbsensiScraperService
     {
         $listingPath = '/superadmin/skpd';
         $listingResponse = $this->request('GET', $listingPath);
-        $path = $this->skpdLoginPath($skpdId);
-        $response = $this->request('GET', $path, [
+        $listingBody = (string) $listingResponse->getBody();
+        $action = $this->extractSkpdLoginAction($listingBody, $skpdId);
+        $method = $action['method'] ?? 'GET';
+        $path = $action['url'] ?? $this->skpdLoginPath($skpdId);
+        $options = [
             'headers' => [
                 'Referer' => $this->baseUrl . $listingPath,
             ],
-        ]);
+        ];
+
+        if ($method === 'POST') {
+            $options['form_params'] = $action['form_params'] ?? [];
+        }
+
+        $response = $this->request($method, $path, $options);
         $body = (string) $response->getBody();
 
         return [
             'success' => ! $this->isLoginPage($body) && $response->getStatusCode() < 500,
+            'action' => $action,
             'listing' => [
                 'path' => $listingPath,
                 'status_code' => $listingResponse->getStatusCode(),
@@ -343,6 +353,66 @@ class AbsensiScraperService
     protected function skpdLoginPath(int $skpdId): string
     {
         return '/superadmin/skpd/' . max(1, $skpdId);
+    }
+
+    protected function extractSkpdLoginAction(string $html, int $skpdId): array
+    {
+        $crawler = $this->createCrawler($html, $this->baseUrl . '/superadmin/skpd');
+        $rows = $crawler->filter('table tbody tr');
+        $rowIndex = max(0, $skpdId - 1);
+        $row = $rows->count() > $rowIndex ? $rows->eq($rowIndex) : null;
+
+        if ($row === null) {
+            return [
+                'method' => 'GET',
+                'url' => $this->skpdLoginPath($skpdId),
+                'source' => 'fallback',
+            ];
+        }
+
+        $form = $row->filter('form')->first();
+        if ($form->count() > 0) {
+            $method = strtoupper(trim((string) $form->attr('method')) ?: 'GET');
+            $action = trim((string) $form->attr('action'));
+            $formParams = [];
+
+            $form->filter('input[name]')->each(function (Crawler $input) use (&$formParams) {
+                $name = trim((string) $input->attr('name'));
+                if ($name === '') {
+                    return;
+                }
+
+                $formParams[$name] = (string) $input->attr('value');
+            });
+
+            return [
+                'method' => $method === 'POST' ? 'POST' : 'GET',
+                'url' => $action !== '' ? $action : $this->skpdLoginPath($skpdId),
+                'form_params' => $formParams,
+                'source' => 'form',
+            ];
+        }
+
+        $loginLink = $row->filter('a[href]')->reduce(function (Crawler $link) {
+            $text = strtolower($this->normalizeText($link->text('')));
+            $href = strtolower((string) $link->attr('href'));
+
+            return str_contains($text, 'login') || str_contains($href, '/superadmin/skpd/');
+        })->first();
+
+        if ($loginLink->count() > 0) {
+            return [
+                'method' => 'GET',
+                'url' => (string) $loginLink->attr('href'),
+                'source' => 'link',
+            ];
+        }
+
+        return [
+            'method' => 'GET',
+            'url' => $this->skpdLoginPath($skpdId),
+            'source' => 'fallback',
+        ];
     }
 
     protected function logHttpExchange(string $method, string $uri, ResponseInterface $response): void
