@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\AbsensiCutiReport;
+use App\Models\AbsensiDailyReport;
 use App\Models\AbsensiPegawai;
 use Carbon\Carbon;
 use GuzzleHttp\Client;
@@ -23,6 +24,8 @@ class AbsensiScraperService
     private const DEFAULT_COOKIE_SESSION_KEY = 'absensi_scraper.cookies';
     private const DEFAULT_SKPD_ID = 1;
     private const ADMIN_CUTI_PATH = '/admin/cuti';
+    private const ADMIN_LAPORAN_PATH = '/admin/laporan';
+    private const ADMIN_LAPORAN_TANGGAL_PATH = '/admin/laporan/tanggal';
     private const SUPERADMIN_PEGAWAI_PATH = '/superadmin/pegawai';
     private const SENSITIVE_HEADER_KEYWORDS = ['nip', 'nama', 'pegawai', 'nik', 'alamat', 'telepon', 'hp', 'email'];
 
@@ -60,6 +63,8 @@ class AbsensiScraperService
 
     public function login(string $username, string $password, int $skpdId = self::DEFAULT_SKPD_ID): array
     {
+        $this->resetPortalSession();
+        $this->resetPortalSession();
         $auth = $this->authenticatePortal($username, $password);
         $response = $auth['response'];
         $body = $auth['body'];
@@ -245,6 +250,109 @@ class AbsensiScraperService
         ];
     }
 
+    public function scrapeDailyReports(
+        string $username,
+        string $password,
+        string $dateStart,
+        string $dateEnd,
+        int $startSkpdId = 1,
+        int $endSkpdId = 35
+    ): array {
+        $dateStart = $this->normalizeDateValue($dateStart) ?? now()->toDateString();
+        $dateEnd = $this->normalizeDateValue($dateEnd) ?? $dateStart;
+        $startDate = Carbon::parse($dateStart);
+        $endDate = Carbon::parse($dateEnd);
+        if ($endDate->lt($startDate)) {
+            $endDate = $startDate->copy();
+        }
+
+        $this->resetPortalSession();
+        $auth = $this->authenticatePortal($username, $password);
+        $startSkpdId = max(1, $startSkpdId);
+        $endSkpdId = max($startSkpdId, $endSkpdId);
+        $skpdActions = $this->fetchSkpdLoginActions($startSkpdId, $endSkpdId);
+        $results = [];
+        $stored = 0;
+        $successCount = 0;
+        $failedCount = 0;
+
+        for ($skpdId = $startSkpdId; $skpdId <= $endSkpdId; $skpdId++) {
+            try {
+                if ($skpdId > $startSkpdId) {
+                    $this->resetPortalSession();
+                    $this->authenticatePortal($username, $password);
+                }
+
+                $skpdLogin = $this->loginAsSkpd($skpdId, $skpdActions[$skpdId] ?? null);
+                $storedForSkpd = 0;
+                $dateResults = [];
+
+                for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
+                    $daily = $this->getDailyReportForDate($skpdId, $date->toDateString(), true);
+                    $storedForDate = (int) ($daily['stored_rows'] ?? 0);
+                    $storedForSkpd += $storedForDate;
+                    $dateResults[] = [
+                        'date' => $date->toDateString(),
+                        'success' => (bool) ($daily['success'] ?? false),
+                        'stored_rows' => $storedForDate,
+                        'message' => $daily['message'] ?? null,
+                    ];
+                }
+
+                $results[] = [
+                    'skpd_id' => $skpdId,
+                    'success' => true,
+                    'stored_rows' => $storedForSkpd,
+                    'skpd_login' => [
+                        'success' => $skpdLogin['success'] ?? false,
+                        'path' => $skpdLogin['path'] ?? null,
+                        'status_code' => $skpdLogin['status_code'] ?? null,
+                        'action' => $skpdLogin['action'] ?? null,
+                    ],
+                    'dates' => $dateResults,
+                ];
+
+                $stored += $storedForSkpd;
+                $successCount++;
+            } catch (Throwable $throwable) {
+                $failedCount++;
+                $results[] = [
+                    'skpd_id' => $skpdId,
+                    'success' => false,
+                    'stored_rows' => 0,
+                    'message' => $throwable->getMessage(),
+                ];
+
+                Log::error('Absensi daily report fetch failed', [
+                    'skpd_id' => $skpdId,
+                    'message' => $throwable->getMessage(),
+                ]);
+            }
+        }
+
+        return [
+            'success' => $successCount > 0 && $failedCount === 0,
+            'partial_success' => $successCount > 0 && $failedCount > 0,
+            'login' => [
+                'status_code' => $auth['response']->getStatusCode(),
+                'redirect_history' => $this->redirectHistory($auth['response']),
+                'body_preview' => $this->preview($auth['body']),
+            ],
+            'range' => [
+                'date_start' => $startDate->toDateString(),
+                'date_end' => $endDate->toDateString(),
+                'skpd_start' => $startSkpdId,
+                'skpd_end' => $endSkpdId,
+            ],
+            'summary' => [
+                'success_count' => $successCount,
+                'failed_count' => $failedCount,
+                'stored_rows' => $stored,
+            ],
+            'results' => $results,
+        ];
+    }
+
     public function getCutiDataForRange(
         bool $redact = true,
         int $skpdId = self::DEFAULT_SKPD_ID,
@@ -402,6 +510,77 @@ class AbsensiScraperService
         ];
     }
 
+    public function getDailyReportForDate(int $skpdId, string $date, bool $persistToDatabase = false): array
+    {
+        $reportPage = $this->getLaporanPage();
+        if (! ($reportPage['success'] ?? false)) {
+            return [
+                'success' => false,
+                'message' => 'Halaman laporan tidak bisa diakses.',
+                'page' => $reportPage,
+            ];
+        }
+
+        $form = $this->extractDailyReportPrintForm((string) ($reportPage['body'] ?? ''));
+        $response = $this->request($form['method'], $form['url'], [
+            'query' => [
+                '_token' => $form['token'],
+                'tanggal' => $date,
+                'jenis' => 'pdf',
+            ],
+            'headers' => [
+                'Referer' => $this->baseUrl . self::ADMIN_LAPORAN_PATH,
+            ],
+        ]);
+        $body = (string) $response->getBody();
+
+        if ($this->isLoginPage($body)) {
+            return [
+                'success' => false,
+                'message' => 'Sesi laporan sudah tidak aktif.',
+                'page' => [
+                    'path' => $form['url'],
+                    'status_code' => $response->getStatusCode(),
+                    'redirect_history' => $this->redirectHistory($response),
+                    'body_preview' => $this->preview($body),
+                ],
+            ];
+        }
+
+        $parsed = $this->parseDailyReportHtml($body, $skpdId, $date);
+        $storedRows = $persistToDatabase ? $this->storeDailyReportRows($parsed, [
+            'skpd_id' => $skpdId,
+            'fetched_at' => now(),
+        ]) : 0;
+
+        return [
+            'success' => true,
+            'page' => [
+                'path' => $form['url'],
+                'status_code' => $response->getStatusCode(),
+                'redirect_history' => $this->redirectHistory($response),
+                'body_preview' => $this->preview($body),
+            ],
+            'report' => $parsed,
+            'stored_rows' => $storedRows,
+        ];
+    }
+
+    public function getLaporanPage(): array
+    {
+        $response = $this->request('GET', self::ADMIN_LAPORAN_PATH);
+        $body = (string) $response->getBody();
+
+        return [
+            'success' => ! $this->isLoginPage($body) && $response->getStatusCode() === 200,
+            'path' => self::ADMIN_LAPORAN_PATH,
+            'status_code' => $response->getStatusCode(),
+            'redirect_history' => $this->redirectHistory($response),
+            'body' => $body,
+            'body_preview' => $this->preview($body),
+        ];
+    }
+
     protected function parseCutiHtml(string $html, bool $redact): array
     {
         $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_CUTI_PATH);
@@ -495,6 +674,195 @@ class AbsensiScraperService
             'row_count' => count($rows),
             'rows' => $rows,
         ];
+    }
+
+    protected function parseDailyReportHtml(string $html, int $skpdId, string $date): array
+    {
+        $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_LAPORAN_TANGGAL_PATH);
+        $title = $this->normalizeText($crawler->filter('p strong')->first()->text(''));
+        $hari = null;
+        $tanggalLabel = null;
+        $rows = [];
+
+        $crawler->filter('table')->first()->filter('tr')->each(function (Crawler $row) use (&$hari, &$tanggalLabel) {
+            $cells = [];
+            $row->filter('td,th')->each(function (Crawler $cell) use (&$cells) {
+                $cells[] = $this->normalizeText($cell->text(''));
+            });
+
+            $label = strtolower((string) ($cells[0] ?? ''));
+            $value = ltrim((string) ($cells[1] ?? ''), ': ');
+
+            if ($label === 'hari') {
+                $hari = $this->normalizeText($value);
+            }
+
+            if ($label === 'tanggal') {
+                $tanggalLabel = $this->normalizeText($value);
+            }
+        });
+
+        $reportTable = $crawler->filter('table')->reduce(function (Crawler $table) {
+            $text = strtolower($this->normalizeText($table->text('')));
+
+            return str_contains($text, 'nama / nip')
+                && str_contains($text, 'pagi')
+                && str_contains($text, 'pulang')
+                && str_contains($text, 'apel');
+        })->first();
+
+        if ($reportTable->count() > 0) {
+            $reportTable->filter('tr')->each(function (Crawler $row) use (&$rows) {
+                $cells = [];
+                $row->filter('td,th')->each(function (Crawler $cell) use (&$cells) {
+                    $cells[] = $this->cellLines($cell);
+                });
+
+                $first = $this->normalizeText($cells[0][0] ?? '');
+                if ($first === '' || strtolower($first) === 'no' || ! ctype_digit($first)) {
+                    return;
+                }
+
+                [$nama, $nip] = $this->splitNameAndNip($cells[1] ?? []);
+
+                $rows[] = [
+                    'nomor' => $first,
+                    'nama_pegawai' => $nama,
+                    'nip' => $nip,
+                    'pangkat' => $this->normalizeText(implode(' ', $cells[2] ?? [])),
+                    'jabatan' => $this->normalizeText(implode(' ', $cells[3] ?? [])),
+                    'pagi' => $this->normalizeText($cells[4][0] ?? ''),
+                    'pulang' => $this->normalizeText($cells[5][0] ?? ''),
+                    'apel' => $this->normalizeText($cells[6][0] ?? ''),
+                ];
+            });
+        }
+
+        $skpd = $this->skpdInfo($skpdId);
+
+        return [
+            'title' => $title,
+            'skpd_id' => $skpdId,
+            'kode_skpd' => $skpd['kode'],
+            'nama_skpd' => $skpd['nama'],
+            'hari' => $hari,
+            'tanggal_label' => $tanggalLabel,
+            'tanggal' => $this->normalizeDateValue($tanggalLabel) ?? $this->normalizeDateValue($date) ?? $date,
+            'row_count' => count($rows),
+            'rows' => $rows,
+        ];
+    }
+
+    protected function storeDailyReportRows(array $report, array $meta): int
+    {
+        $stored = 0;
+        $rows = is_array($report['rows'] ?? null) ? $report['rows'] : [];
+        $tanggal = $this->normalizeDateValue((string) ($report['tanggal'] ?? ''));
+        $skpdId = (int) ($report['skpd_id'] ?? $meta['skpd_id'] ?? self::DEFAULT_SKPD_ID);
+
+        foreach ($rows as $row) {
+            if (! is_array($row) || $tanggal === null) {
+                continue;
+            }
+
+            $rowHash = hash('sha256', json_encode([
+                'skpd_id' => $skpdId,
+                'tanggal' => $tanggal,
+                'nip' => $row['nip'] ?? null,
+                'nomor' => $row['nomor'] ?? null,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+            AbsensiDailyReport::query()->updateOrCreate(
+                ['row_hash' => $rowHash],
+                [
+                    'skpd_id' => $skpdId,
+                    'kode_skpd' => $report['kode_skpd'] ?? null,
+                    'nama_skpd' => $report['nama_skpd'] ?? null,
+                    'tanggal' => $tanggal,
+                    'hari' => $report['hari'] ?? null,
+                    'nama_pegawai' => $row['nama_pegawai'] ?: null,
+                    'nip' => $row['nip'] ?: null,
+                    'pangkat' => $row['pangkat'] ?: null,
+                    'jabatan' => $row['jabatan'] ?: null,
+                    'pagi' => $row['pagi'] ?: null,
+                    'pulang' => $row['pulang'] ?: null,
+                    'apel' => $row['apel'] ?: null,
+                    'row_data' => $row,
+                    'fetched_at' => $meta['fetched_at'] ?? now(),
+                ]
+            );
+            $stored++;
+        }
+
+        return $stored;
+    }
+
+    protected function extractDailyReportPrintForm(string $html): array
+    {
+        $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_LAPORAN_PATH);
+        $form = $crawler->filter('form')->reduce(function (Crawler $form) {
+            $action = strtolower((string) $form->attr('action'));
+            $text = strtolower($this->normalizeText($form->text('')));
+
+            return str_contains($action, '/admin/laporan/tanggal')
+                || (str_contains($text, 'print') && $form->filter('input[name="tanggal"]')->count() > 0);
+        })->first();
+
+        if ($form->count() === 0) {
+            throw new \RuntimeException('Form print laporan harian tidak ditemukan.');
+        }
+
+        $method = strtoupper(trim((string) $form->attr('method')) ?: 'GET');
+        $action = trim((string) $form->attr('action')) ?: self::ADMIN_LAPORAN_TANGGAL_PATH;
+        $token = trim((string) $form->filter('input[name="_token"]')->first()->attr('value'));
+
+        if ($token === '') {
+            throw new \RuntimeException('Token print laporan harian tidak ditemukan.');
+        }
+
+        return [
+            'method' => $method === 'POST' ? 'POST' : 'GET',
+            'url' => $action,
+            'token' => $token,
+        ];
+    }
+
+    protected function splitNameAndNip(array $parts): array
+    {
+        $parts = array_values(array_filter(array_map(fn ($part) => $this->normalizeText((string) $part), $parts)));
+
+        if (count($parts) >= 2) {
+            if (preg_match('/^\d{8,}$/', $parts[0]) === 1) {
+                return [$parts[1] ?? null, $parts[0]];
+            }
+
+            if (preg_match('/^\d{8,}$/', $parts[1]) === 1) {
+                return [$parts[0] ?? null, $parts[1]];
+            }
+        }
+
+        $text = $this->normalizeText(implode(' ', $parts));
+        if (preg_match('/^(.*?)[\s,]*(\d{8,})$/u', $text, $matches) === 1) {
+            return [$this->normalizeText($matches[1]), $matches[2]];
+        }
+
+        return [$text !== '' ? $text : null, null];
+    }
+
+    protected function cellLines(Crawler $cell): array
+    {
+        $html = (string) $cell->html();
+        $text = strip_tags(preg_replace('/<br\s*\/?>/i', "\n", $html) ?? $html);
+        $lines = [];
+
+        foreach (preg_split('/\R/u', html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8')) ?: [] as $part) {
+            $normalized = $this->normalizeText($part);
+            if ($normalized !== '') {
+                $lines[] = $normalized;
+            }
+        }
+
+        return $lines;
     }
 
     protected function mergePegawaiData(array $base, array $next): array

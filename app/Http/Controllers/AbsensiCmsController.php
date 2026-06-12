@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\AbsensiCutiReport;
+use App\Models\AbsensiDailyReport;
 use App\Models\AbsensiPegawai;
 use App\Services\AbsensiScraperService;
 use Illuminate\Contracts\View\View;
@@ -159,6 +160,120 @@ class AbsensiCmsController extends Controller
         ]);
     }
 
+    public function laporanAbsensiHarian(Request $request): View
+    {
+        $query = $this->dailyReportQuery($request)->latest('tanggal')->latest('id');
+
+        return view('absensi-cms.laporan-absensi-harian', [
+            'reports' => $query->paginate(100)->withQueryString(),
+            'totalRows' => AbsensiDailyReport::query()->count(),
+            'apelRows' => AbsensiDailyReport::query()->whereNotNull('apel')->where('apel', '<>', '-')->count(),
+            'lastFetchedAt' => AbsensiDailyReport::query()->max('fetched_at'),
+            'skpdOptions' => $this->skpdOptions(),
+            'skpdMap' => $this->skpdMap(),
+            'result' => null,
+            'dateStart' => $request->input('date_start', now()->toDateString()),
+            'dateEnd' => $request->input('date_end', now()->toDateString()),
+        ]);
+    }
+
+    public function fetchLaporanAbsensiHarian(Request $request): View
+    {
+        $data = $request->validate([
+            'date_start' => ['required', 'date'],
+            'date_end' => ['required', 'date', 'after_or_equal:date_start'],
+            'start_skpd_id' => ['nullable', 'integer', 'min:1'],
+            'end_skpd_id' => ['nullable', 'integer', 'min:1', 'gte:start_skpd_id'],
+        ]);
+        $credentials = $this->absensiCredentials();
+
+        $result = $this->scraper->scrapeDailyReports(
+            $credentials['username'],
+            $credentials['password'],
+            $data['date_start'],
+            $data['date_end'],
+            (int) ($data['start_skpd_id'] ?? 1),
+            (int) ($data['end_skpd_id'] ?? 35)
+        );
+
+        $query = AbsensiDailyReport::query()->latest('tanggal')->latest('id');
+
+        return view('absensi-cms.laporan-absensi-harian', [
+            'reports' => $query->paginate(100),
+            'totalRows' => AbsensiDailyReport::query()->count(),
+            'apelRows' => AbsensiDailyReport::query()->whereNotNull('apel')->where('apel', '<>', '-')->count(),
+            'lastFetchedAt' => AbsensiDailyReport::query()->max('fetched_at'),
+            'skpdOptions' => $this->skpdOptions(),
+            'skpdMap' => $this->skpdMap(),
+            'result' => $result,
+            'dateStart' => $data['date_start'],
+            'dateEnd' => $data['date_end'],
+        ]);
+    }
+
+    public function laporanBalaiKota(Request $request): View
+    {
+        $date = (string) $request->input('date', now()->toDateString());
+        $rows = $this->balaiKotaReportRows($date);
+
+        return view('absensi-cms.laporan-balai-kota', [
+            'date' => $date,
+            'rows' => $rows,
+            'totals' => $this->balaiKotaTotals($rows),
+            'result' => null,
+        ]);
+    }
+
+    public function fetchLaporanBalaiKota(Request $request): View
+    {
+        $data = $request->validate([
+            'date' => ['required', 'date'],
+        ]);
+        $credentials = $this->absensiCredentials();
+        $results = [];
+        $stored = 0;
+        $successCount = 0;
+        $failedCount = 0;
+
+        foreach ($this->balaiKotaSkpdIds() as $skpdId) {
+            $result = $this->scraper->scrapeDailyReports(
+                $credentials['username'],
+                $credentials['password'],
+                $data['date'],
+                $data['date'],
+                $skpdId,
+                $skpdId
+            );
+
+            $summary = $result['summary'] ?? [];
+            $stored += (int) ($summary['stored_rows'] ?? 0);
+            $successCount += (int) ($summary['success_count'] ?? 0);
+            $failedCount += (int) ($summary['failed_count'] ?? 0);
+            $results[] = [
+                'skpd_id' => $skpdId,
+                'success' => (bool) ($result['success'] ?? false),
+                'summary' => $summary,
+            ];
+        }
+
+        $rows = $this->balaiKotaReportRows($data['date']);
+
+        return view('absensi-cms.laporan-balai-kota', [
+            'date' => $data['date'],
+            'rows' => $rows,
+            'totals' => $this->balaiKotaTotals($rows),
+            'result' => [
+                'success' => $failedCount === 0,
+                'summary' => [
+                    'success_count' => $successCount,
+                    'failed_count' => $failedCount,
+                    'stored_rows' => $stored,
+                ],
+                'results' => $results,
+            ],
+        ]);
+    }
+
     private function laporanCutiQuery(Request $request)
     {
         $query = AbsensiCutiReport::query();
@@ -216,6 +331,163 @@ class AbsensiCmsController extends Controller
         }
 
         return $query;
+    }
+
+    private function dailyReportQuery(Request $request)
+    {
+        $query = AbsensiDailyReport::query();
+
+        if ($request->filled('skpd_id')) {
+            $query->where('skpd_id', (int) $request->input('skpd_id'));
+        }
+
+        if ($request->filled('date_start')) {
+            $query->whereDate('tanggal', '>=', (string) $request->input('date_start'));
+        }
+
+        if ($request->filled('date_end')) {
+            $query->whereDate('tanggal', '<=', (string) $request->input('date_end'));
+        }
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->input('search'));
+            $query->where(function ($builder) use ($search) {
+                $builder
+                    ->where('nama_pegawai', 'like', '%' . $search . '%')
+                    ->orWhere('nip', 'like', '%' . $search . '%')
+                    ->orWhere('nama_skpd', 'like', '%' . $search . '%')
+                    ->orWhere('jabatan', 'like', '%' . $search . '%')
+                    ->orWhere('pangkat', 'like', '%' . $search . '%')
+                    ->orWhere('pagi', 'like', '%' . $search . '%')
+                    ->orWhere('pulang', 'like', '%' . $search . '%')
+                    ->orWhere('apel', 'like', '%' . $search . '%');
+            });
+        }
+
+        return $query;
+    }
+
+    private function balaiKotaReportRows(string $date): array
+    {
+        return collect($this->balaiKotaUnits())
+            ->map(function (array $unit, int $index) use ($date) {
+                $dailyRows = $this->balaiKotaDailyRows($unit, $date);
+                $nips = $dailyRows
+                    ->pluck('nip')
+                    ->filter()
+                    ->unique()
+                    ->values();
+                $jumlahAsn = $nips->count();
+                $hadir = $dailyRows
+                    ->filter(fn (AbsensiDailyReport $row) => $this->isValidApelValue($row->apel))
+                    ->pluck('nip')
+                    ->filter()
+                    ->unique()
+                    ->count();
+                $tugasCuti = $nips->isEmpty() ? 0 : AbsensiCutiReport::query()
+                    ->whereIn('nip', $nips->all())
+                    ->whereDate('tanggal_mulai', '<=', $date)
+                    ->whereDate('tanggal_selesai', '>=', $date)
+                    ->where(function ($query) {
+                        $query
+                            ->where('jenis_cuti', 'like', '%Tugas%')
+                            ->orWhere('jenis_cuti', 'like', '%Cuti%')
+                            ->orWhere('jenis_cuti', 'like', '%Sakit%')
+                            ->orWhere('jenis_cuti', 'like', '%Training%')
+                            ->orWhere('jenis_cuti', 'like', '%Diklat%');
+                    })
+                    ->distinct('nip')
+                    ->count('nip');
+                $tidakHadir = max(0, $jumlahAsn - $hadir);
+                $tanpaKeterangan = max(0, $tidakHadir - $tugasCuti);
+
+                return [
+                    'no' => $index + 1,
+                    'unit_kerja' => $unit['label'],
+                    'jumlah_asn' => $jumlahAsn,
+                    'tanpa_keterangan' => $tanpaKeterangan,
+                    'tugas_cuti' => $tugasCuti,
+                    'tidak_hadir' => $tidakHadir,
+                    'hadir' => $hadir,
+                    'persentase' => $jumlahAsn > 0 ? round(($hadir / $jumlahAsn) * 100) : 0,
+                ];
+            })
+            ->all();
+    }
+
+    private function balaiKotaDailyRows(array $unit, string $date)
+    {
+        $query = AbsensiDailyReport::query()
+            ->whereDate('tanggal', $date)
+            ->whereIn('skpd_id', $unit['skpd_ids']);
+
+        if (isset($unit['jabatan_contains'])) {
+            $needles = (array) $unit['jabatan_contains'];
+            $query->where(function ($builder) use ($needles) {
+                foreach ($needles as $needle) {
+                    $builder->orWhere('jabatan', 'like', '%' . $needle . '%');
+                }
+            });
+        }
+
+        return $query->get();
+    }
+
+    private function balaiKotaTotals(array $rows): array
+    {
+        $totals = [
+            'jumlah_asn' => array_sum(array_column($rows, 'jumlah_asn')),
+            'tanpa_keterangan' => array_sum(array_column($rows, 'tanpa_keterangan')),
+            'tugas_cuti' => array_sum(array_column($rows, 'tugas_cuti')),
+            'tidak_hadir' => array_sum(array_column($rows, 'tidak_hadir')),
+            'hadir' => array_sum(array_column($rows, 'hadir')),
+        ];
+        $totals['persentase'] = $totals['jumlah_asn'] > 0
+            ? round(($totals['hadir'] / $totals['jumlah_asn']) * 100)
+            : 0;
+
+        return $totals;
+    }
+
+    private function isValidApelValue(?string $value): bool
+    {
+        $value = trim((string) $value);
+
+        return $value !== ''
+            && $value !== '-'
+            && $value !== '00:00:00';
+    }
+
+    private function balaiKotaSkpdIds(): array
+    {
+        return collect($this->balaiKotaUnits())
+            ->flatMap(fn (array $unit) => $unit['skpd_ids'])
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function balaiKotaUnits(): array
+    {
+        return [
+            ['label' => 'Sekretariat Daerah - Bagian Umum', 'skpd_ids' => [20], 'jabatan_contains' => ['Bagian Umum']],
+            ['label' => 'Sekretariat Daerah - Bagian Administrasi Pembangunan', 'skpd_ids' => [20], 'jabatan_contains' => ['Administrasi Pembangunan']],
+            ['label' => 'Sekretariat Daerah - Bagian Kesejahteraan Rakyat', 'skpd_ids' => [20], 'jabatan_contains' => ['Kesejahteraan Rakyat']],
+            ['label' => 'Sekretariat Daerah - Bagian Pemerintahan', 'skpd_ids' => [20], 'jabatan_contains' => ['Pemerintahan']],
+            ['label' => 'Sekretariat Daerah - Bagian Hukum', 'skpd_ids' => [20], 'jabatan_contains' => ['Bagian Hukum']],
+            ['label' => 'Sekretariat Daerah - Bagian Organisasi', 'skpd_ids' => [20], 'jabatan_contains' => ['Bagian Organisasi']],
+            ['label' => 'Sekretariat Daerah - Bagian Perekonomian dan Sumber Daya Alam', 'skpd_ids' => [20], 'jabatan_contains' => ['Perekonomian', 'Sumber Daya Alam']],
+            ['label' => 'Sekretariat Daerah - Bagian Pengadaan Barang dan Jasa', 'skpd_ids' => [20], 'jabatan_contains' => ['Pengadaan Barang dan Jasa']],
+            ['label' => 'Sekretariat Daerah - Bagian Protokol dan Komunikasi Pimpinan', 'skpd_ids' => [20], 'jabatan_contains' => ['Protokol', 'Komunikasi Pimpinan']],
+            ['label' => 'Dinas Lingkungan Hidup', 'skpd_ids' => [9]],
+            ['label' => 'Dinas Komunikasi Informatika dan Statistik', 'skpd_ids' => [13]],
+            ['label' => 'Dinas Perumahan Rakyat dan Kawasan Permukiman', 'skpd_ids' => [3]],
+            ['label' => 'Dinas Pemadam Kebakaran dan Penyelamatan', 'skpd_ids' => [34]],
+            ['label' => 'Badan Kepegawaian dan Pengembangan Sumber Daya Manusia', 'skpd_ids' => [24]],
+            ['label' => 'Badan Perencanaan Pembangunan Daerah, Penelitian dan Pengembangan', 'skpd_ids' => [31]],
+            ['label' => 'Badan Kesatuan Bangsa dan Politik', 'skpd_ids' => [5]],
+            ['label' => 'Badan Penanggulangan Bencana Daerah', 'skpd_ids' => [25]],
+        ];
     }
 
     private function excelTable($reports): string

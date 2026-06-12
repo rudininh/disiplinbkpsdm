@@ -46,6 +46,14 @@
                     <i data-lucide="file-spreadsheet" class="h-4 w-4"></i>
                     Laporan Cuti
                 </a>
+                <a href="{{ route('cms.laporan-absensi-harian.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="calendar-check" class="h-4 w-4"></i>
+                    Laporan Absensi
+                </a>
+                <a href="{{ route('cms.laporan-balai-kota.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="building-2" class="h-4 w-4"></i>
+                    Laporan Balai Kota
+                </a>
                 <a href="{{ route('cms.pegawai.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="users" class="h-4 w-4"></i>
                     Pegawai
