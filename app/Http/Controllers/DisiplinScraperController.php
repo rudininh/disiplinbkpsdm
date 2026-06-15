@@ -2,28 +2,28 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\TppScraperService;
+use App\Services\DisiplinScraperService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 
-class TppScraperController extends Controller
+class DisiplinScraperController extends Controller
 {
-    public function __construct(private readonly TppScraperService $scraper)
+    public function __construct(private readonly DisiplinScraperService $scraper)
     {
     }
 
     public function index(): JsonResponse
     {
         return response()->json([
-            'name' => 'TPP Scraper',
+            'name' => 'Disiplin Scraper',
             'status' => 'ready',
             'endpoints' => [
-                'GET /tpp-scraper',
-                'POST /tpp-scraper/run',
-                'POST /tpp-scraper/login',
-                'POST /tpp-scraper/discover',
-                'POST /tpp-scraper/analyze',
+                'GET /disiplin-scraper',
+                'POST /disiplin-scraper/run',
+                'POST /disiplin-scraper/login',
+                'POST /disiplin-scraper/discover',
+                'POST /disiplin-scraper/analyze',
             ],
         ]);
     }

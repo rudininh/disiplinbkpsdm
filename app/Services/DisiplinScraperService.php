@@ -14,10 +14,10 @@ use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\DomCrawler\Crawler;
 use Throwable;
 
-class TppScraperService
+class DisiplinScraperService
 {
     private const DEFAULT_BASE_URL = 'https://tpp.banjarmasinkota.go.id';
-    private const DEFAULT_COOKIE_SESSION_KEY = 'tpp_scraper.cookies';
+    private const DEFAULT_COOKIE_SESSION_KEY = 'disiplin_scraper.cookies';
     private const ANALYSIS_KEYWORDS = ['pegawai', 'presensi', 'tpp', 'skpd'];
 
     private Client $client;
@@ -125,7 +125,7 @@ class TppScraperService
     {
         $cookies = $this->cookieJar->toArray();
 
-        Log::debug('TPP cookie jar', [
+        Log::debug('Disiplin cookie jar', [
             'cookies' => $cookies,
         ]);
 
@@ -214,7 +214,7 @@ class TppScraperService
         $sourcePath = storage_path('scraping/discovered_endpoints.json');
         $targetPath = storage_path('scraping/analyzed_endpoints.json');
 
-        Log::info('TPP endpoint analysis started', [
+        Log::info('Disiplin endpoint analysis started', [
             'source_path' => $sourcePath,
             'target_path' => $targetPath,
             'cookie_session_key' => $this->cookieSessionKey,
@@ -223,7 +223,7 @@ class TppScraperService
         $payload = $this->readJsonFile($sourcePath);
         $endpoints = $this->normalizeDiscoveredEndpointsPayload($payload);
 
-        Log::info('TPP endpoint analysis discovered endpoint list loaded', [
+        Log::info('Disiplin endpoint analysis discovered endpoint list loaded', [
             'source_path' => $sourcePath,
             'count' => count($endpoints),
         ]);
@@ -233,7 +233,7 @@ class TppScraperService
 
         foreach ($endpoints as $index => $endpoint) {
             if (! is_array($endpoint)) {
-                Log::warning('TPP endpoint analysis skipped invalid entry', [
+                Log::warning('Disiplin endpoint analysis skipped invalid entry', [
                     'index' => $index,
                     'reason' => 'endpoint is not an array',
                 ]);
@@ -242,7 +242,7 @@ class TppScraperService
 
             $originalUrl = trim((string) ($endpoint['url'] ?? ''));
             if ($originalUrl === '') {
-                Log::warning('TPP endpoint analysis skipped endpoint without URL', [
+                Log::warning('Disiplin endpoint analysis skipped endpoint without URL', [
                     'index' => $index,
                     'entry' => $endpoint,
                 ]);
@@ -252,7 +252,7 @@ class TppScraperService
             $url = $this->resolveUrl($originalUrl, $this->baseUrl) ?? $originalUrl;
             $requestNumber = $index + 1;
 
-            Log::info('TPP endpoint analysis request started', [
+            Log::info('Disiplin endpoint analysis request started', [
                 'request_number' => $requestNumber,
                 'total' => $total,
                 'url' => $url,
@@ -301,7 +301,7 @@ class TppScraperService
 
                 $results[] = $result;
 
-                Log::info('TPP endpoint analysis completed', [
+                Log::info('Disiplin endpoint analysis completed', [
                     'request_number' => $requestNumber,
                     'total' => $total,
                     'url' => $url,
@@ -315,7 +315,7 @@ class TppScraperService
                     'keyword_found' => $keywordFound,
                 ]);
             } catch (Throwable $throwable) {
-                Log::error('TPP endpoint analysis failed', [
+                Log::error('Disiplin endpoint analysis failed', [
                     'request_number' => $requestNumber,
                     'total' => $total,
                     'url' => $url,
@@ -343,7 +343,7 @@ class TppScraperService
             'cookie_session_key' => $this->cookieSessionKey,
         ]);
 
-        Log::info('TPP endpoint analysis finished', [
+        Log::info('Disiplin endpoint analysis finished', [
             'source_path' => $sourcePath,
             'target_path' => $targetPath,
             'count' => count($results),
@@ -372,7 +372,7 @@ class TppScraperService
 
             return $response;
         } catch (Throwable $throwable) {
-            Log::error('TPP request failed', [
+            Log::error('Disiplin request failed', [
                 'method' => $method,
                 'uri' => $uri,
                 'message' => $throwable->getMessage(),
@@ -391,7 +391,7 @@ class TppScraperService
             $bodyStream->rewind();
         }
 
-        Log::debug('TPP HTTP exchange', [
+        Log::debug('Disiplin HTTP exchange', [
             'method' => $method,
             'uri' => $uri,
             'status_code' => $response->getStatusCode(),
@@ -533,7 +533,7 @@ class TppScraperService
 
     protected function logDiscoveredEndpoint(string $url, string $type, string $source): void
     {
-        Log::info('TPP endpoint discovered', [
+        Log::info('Disiplin endpoint discovered', [
             'url' => $url,
             'type' => $type,
             'source' => $source,
@@ -598,7 +598,7 @@ class TppScraperService
             json_encode($endpoints, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
         );
 
-        Log::info('TPP analyzed endpoints saved', [
+        Log::info('Disiplin analyzed endpoints saved', [
             'target_path' => $targetPath,
             'count' => count($endpoints),
             'meta' => $meta,
@@ -608,7 +608,7 @@ class TppScraperService
     protected function readJsonFile(string $path): array
     {
         if (! file_exists($path)) {
-            Log::warning('TPP JSON file missing', [
+            Log::warning('Disiplin JSON file missing', [
                 'path' => $path,
             ]);
 
@@ -617,7 +617,7 @@ class TppScraperService
 
         $contents = file_get_contents($path);
         if ($contents === false || trim($contents) === '') {
-            Log::warning('TPP JSON file empty', [
+            Log::warning('Disiplin JSON file empty', [
                 'path' => $path,
             ]);
 
@@ -626,7 +626,7 @@ class TppScraperService
 
         $decoded = json_decode($contents, true);
         if (json_last_error() !== JSON_ERROR_NONE || ! is_array($decoded)) {
-            Log::warning('TPP JSON file could not be decoded', [
+            Log::warning('Disiplin JSON file could not be decoded', [
                 'path' => $path,
                 'json_error' => json_last_error_msg(),
             ]);
@@ -789,7 +789,7 @@ class TppScraperService
         return function (callable $handler): callable {
             return function (RequestInterface $request, array $options) use ($handler) {
                 if ($this->shouldLogTrafficRequest($request)) {
-                    Log::debug('TPP post-login traffic request', [
+                    Log::debug('Disiplin post-login traffic request', [
                         'method' => $request->getMethod(),
                         'url' => (string) $request->getUri(),
                         'path' => $request->getUri()->getPath(),

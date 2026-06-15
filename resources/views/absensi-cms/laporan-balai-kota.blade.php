@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Laporan Balai Kota - TPP Insight CMS</title>
+    <title>Laporan Balai Kota - Disiplin BKPSDM CMS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
@@ -23,7 +23,7 @@
                         <i data-lucide="scan-line" class="h-5 w-5"></i>
                     </div>
                     <div>
-                        <div class="text-sm font-semibold tracking-wide">TPP Insight</div>
+                        <div class="text-sm font-semibold tracking-wide">Disiplin BKPSDM</div>
                         <div class="text-xs text-zinc-400">Absensi CMS</div>
                     </div>
                 </div>

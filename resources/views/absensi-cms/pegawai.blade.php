@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Pegawai - TPP Insight CMS</title>
+    <title>Pegawai - Disiplin BKPSDM CMS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
@@ -16,7 +16,7 @@
                         <i data-lucide="scan-line" class="h-5 w-5"></i>
                     </div>
                     <div>
-                        <div class="text-sm font-semibold tracking-wide">TPP Insight</div>
+                        <div class="text-sm font-semibold tracking-wide">Disiplin BKPSDM</div>
                         <div class="text-xs text-zinc-400">Absensi CMS</div>
                     </div>
                 </div>
@@ -51,9 +51,9 @@
                     <i data-lucide="braces" class="h-4 w-4"></i>
                     API Scraper
                 </a>
-                <a href="{{ route('tpp-scraper.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                <a href="{{ route('disiplin-scraper.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="network" class="h-4 w-4"></i>
-                    TPP Tools
+                    Disiplin Tools
                 </a>
             </nav>
         </aside>

@@ -2,7 +2,7 @@
 
 use App\Http\Controllers\AbsensiCmsController;
 use App\Http\Controllers\AbsensiScraperController;
-use App\Http\Controllers\TppScraperController;
+use App\Http\Controllers\DisiplinScraperController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', [AbsensiCmsController::class, 'index'])->name('dashboard');
@@ -29,10 +29,10 @@ Route::prefix('absensi-scraper')->name('absensi-scraper.')->group(function () {
     Route::post('/cuti', [AbsensiScraperController::class, 'cuti'])->name('cuti');
 });
 
-Route::prefix('tpp-scraper')->name('tpp-scraper.')->group(function () {
-    Route::get('/', [TppScraperController::class, 'index'])->name('index');
-    Route::post('/run', [TppScraperController::class, 'run'])->name('run');
-    Route::post('/login', [TppScraperController::class, 'login'])->name('login');
-    Route::post('/discover', [TppScraperController::class, 'discover'])->name('discover');
-    Route::post('/analyze', [TppScraperController::class, 'analyze'])->name('analyze');
+Route::prefix('disiplin-scraper')->name('disiplin-scraper.')->group(function () {
+    Route::get('/', [DisiplinScraperController::class, 'index'])->name('index');
+    Route::post('/run', [DisiplinScraperController::class, 'run'])->name('run');
+    Route::post('/login', [DisiplinScraperController::class, 'login'])->name('login');
+    Route::post('/discover', [DisiplinScraperController::class, 'discover'])->name('discover');
+    Route::post('/analyze', [DisiplinScraperController::class, 'analyze'])->name('analyze');
 });
