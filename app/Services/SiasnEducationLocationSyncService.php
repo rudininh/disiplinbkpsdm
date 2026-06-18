@@ -128,6 +128,99 @@ class SiasnEducationLocationSyncService
         ];
     }
 
+    public function syncReferenceUnitEmployees(string $absensiUsername, string $absensiPassword, array $educationUnits): array
+    {
+        $referenceLookup = $this->referenceLookup($educationUnits);
+        if ($referenceLookup === []) {
+            return [
+                'success' => false,
+                'message' => 'Data referensi unit kerja belum tersedia.',
+            ];
+        }
+
+        $matchedLocationNames = [];
+        $scraped = $this->absensiScraper->scrapeLokasiPegawai(
+            $absensiUsername,
+            $absensiPassword,
+            self::DINAS_PENDIDIKAN_SKPD_ID,
+            null,
+            function (array $location) use ($referenceLookup, &$matchedLocationNames): bool {
+                $matched = $this->matchReferenceUnit((string) ($location['nama'] ?? ''), $referenceLookup);
+                if ($matched === null) {
+                    return false;
+                }
+
+                $matchedLocationNames[(string) ($location['lokasi_id'] ?? '')] = $matched['unit_kerja'] ?? null;
+
+                return true;
+            }
+        );
+
+        if (! ($scraped['success'] ?? false)) {
+            return $scraped;
+        }
+
+        $skpd = config('services.absensi.skpd.' . self::DINAS_PENDIDIKAN_SKPD_ID, []);
+        $stored = 0;
+        $matchedLocations = [];
+        $results = [];
+
+        foreach (($scraped['employees']['rows'] ?? []) as $employee) {
+            $nip = preg_replace('/\D+/', '', (string) ($employee['nip'] ?? '')) ?? '';
+            $lokasiId = (string) ($employee['lokasi_id'] ?? '');
+            $lokasiNama = (string) ($employee['lokasi_nama'] ?? '');
+            $matchedUnit = $matchedLocationNames[$lokasiId] ?? $this->matchReferenceUnit($lokasiNama, $referenceLookup);
+
+            if ($nip === '' || $matchedUnit === null) {
+                continue;
+            }
+
+            SiasnAbsensiLocationEmployee::query()->updateOrCreate(
+                [
+                    'lokasi_id' => $lokasiId,
+                    'nip' => $nip,
+                ],
+                [
+                    'skpd_id' => self::DINAS_PENDIDIKAN_SKPD_ID,
+                    'kode_skpd' => $skpd['kode'] ?? null,
+                    'nama_skpd' => $skpd['nama'] ?? null,
+                    'lokasi_nama' => $lokasiNama ?: null,
+                    'lokasi_alamat' => ($employee['lokasi_alamat'] ?? null) ?: null,
+                    'lokasi_lat' => ($employee['lokasi_lat'] ?? null) ?: null,
+                    'lokasi_long' => ($employee['lokasi_long'] ?? null) ?: null,
+                    'nama' => ($employee['nama'] ?? null) ?: null,
+                    'match_status' => 'lokasi_absensi_cocok',
+                    'row_data' => array_merge($employee, [
+                        'referensi_npsn' => $matchedUnit['npsn'] ?? null,
+                        'referensi_unit_kerja' => $matchedUnit['unit_kerja'] ?? null,
+                    ]),
+                    'fetched_at' => now(),
+                ]
+            );
+
+            $stored++;
+            $matchedLocations[$lokasiId] = $matchedUnit['unit_kerja'] ?? $lokasiNama;
+            $results[] = [
+                'nip' => $nip,
+                'nama' => $employee['nama'] ?? null,
+                'lokasi_absensi' => $lokasiNama,
+                'unit_kerja' => $matchedUnit['unit_kerja'] ?? null,
+            ];
+        }
+
+        return [
+            'success' => true,
+            'message' => 'Sinkron pegawai lokasi absensi selesai.',
+            'summary' => [
+                'lokasi_absensi' => $scraped['locations']['row_count'] ?? 0,
+                'lokasi_cocok' => count($matchedLocations),
+                'pegawai_scraped' => count($scraped['employees']['rows'] ?? []),
+                'stored_rows' => $stored,
+            ],
+            'results' => $results,
+        ];
+    }
+
     private function matchStatus(string $lokasiAbsensi, string $unitOrganisasi): string
     {
         $lokasi = $this->normalizeUnitName($lokasiAbsensi);
@@ -156,12 +249,51 @@ class SiasnEducationLocationSyncService
 
     private function normalizeUnitName(string $value): string
     {
-        return Str::of($value)
+        $normalized = Str::of($value)
             ->lower()
+            ->replaceMatches('/\bkota\s+banjarmasin\b/u', '')
+            ->replaceMatches('/\bsdn\b/u', 'sd negeri')
+            ->replaceMatches('/\bsd\s*n\b/u', 'sd negeri')
+            ->replaceMatches('/\bsmpn\b/u', 'smp negeri')
+            ->replaceMatches('/\bsmp\s*n\b/u', 'smp negeri')
+            ->replaceMatches('/\bmtsn\b/u', 'mts negeri')
+            ->replaceMatches('/\bmin\b/u', 'mi negeri')
             ->replaceMatches('/[^a-z0-9]+/u', ' ')
             ->replaceMatches('/\b(sd|smp|tk)\s*n\b/u', '$1 negeri')
             ->replaceMatches('/\s+/u', ' ')
             ->trim()
             ->toString();
+
+        return preg_replace('/\b0+(\d+)\b/u', '$1', $normalized) ?? $normalized;
+    }
+
+    private function referenceLookup(array $educationUnits): array
+    {
+        $lookup = [];
+
+        foreach ($educationUnits as $unit) {
+            if (! is_array($unit)) {
+                continue;
+            }
+
+            $key = $this->normalizeUnitName((string) ($unit['unit_kerja'] ?? ''));
+            if ($key === '') {
+                continue;
+            }
+
+            $lookup[$key] = $unit;
+        }
+
+        return $lookup;
+    }
+
+    private function matchReferenceUnit(string $locationName, array $referenceLookup): ?array
+    {
+        $key = $this->normalizeUnitName($locationName);
+        if ($key === '') {
+            return null;
+        }
+
+        return $referenceLookup[$key] ?? null;
     }
 }

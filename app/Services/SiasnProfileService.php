@@ -13,6 +13,38 @@ class SiasnProfileService
 {
     private const BASE_URL = 'https://api-siasn.bkn.go.id';
 
+    public function tokenInfo(string $bearerToken): array
+    {
+        $token = $this->normalizeToken($bearerToken);
+
+        if ($token === '') {
+            throw new RuntimeException('Token SIASN belum diisi.');
+        }
+
+        $this->ensureBearerTokenLooksValid($token);
+
+        $payload = $this->jwtPayload($token);
+        $expiresAt = is_array($payload) && isset($payload['exp'])
+            ? Carbon::createFromTimestamp((int) $payload['exp'])
+            : null;
+
+        if ($expiresAt !== null && $expiresAt->isPast()) {
+            throw new RuntimeException('Token SIASN sudah kedaluwarsa pada ' . $expiresAt->format('Y-m-d H:i:s') . '. Silakan login ulang lalu ambil token baru.');
+        }
+
+        $pegawai = is_array($payload['pegawai'] ?? null) ? $payload['pegawai'] : [];
+        $nama = $this->stringValue($pegawai['nama'] ?? null);
+        $nip = $this->stringValue($pegawai['nip'] ?? $pegawai['username'] ?? null);
+
+        return [
+            'token' => $token,
+            'expires_at' => $expiresAt?->timestamp,
+            'expires_at_text' => $expiresAt?->format('Y-m-d H:i:s'),
+            'nama' => $nama,
+            'nip' => $nip,
+        ];
+    }
+
     public function fetchAndStore(string $nip, string $bearerToken): array
     {
         $nip = preg_replace('/\D+/', '', $nip) ?? '';
@@ -63,20 +95,11 @@ class SiasnProfileService
         $this->ensureBearerTokenLooksValid($token);
 
         if ($nip === '') {
-            $payload = $this->jwtPayload($token);
-            $expiresAt = is_array($payload) && isset($payload['exp'])
-                ? Carbon::createFromTimestamp((int) $payload['exp'])
-                : null;
-
-            if ($expiresAt !== null && $expiresAt->isPast()) {
-                throw new RuntimeException('Token SIASN sudah kedaluwarsa pada ' . $expiresAt->format('Y-m-d H:i:s') . '. Silakan login ulang lalu ambil token baru.');
-            }
-
-            $pegawai = is_array($payload['pegawai'] ?? null) ? $payload['pegawai'] : [];
-            $nama = $this->stringValue($pegawai['nama'] ?? null);
-            $nipToken = $this->stringValue($pegawai['nip'] ?? $pegawai['username'] ?? null);
+            $info = $this->tokenInfo($token);
+            $nama = $info['nama'];
+            $nipToken = $info['nip'];
             $identity = $nama ?: ($nipToken ? 'NIP ' . $nipToken : 'pengguna SIASN');
-            $expiryText = $expiresAt ? ' Berlaku sampai ' . $expiresAt->format('Y-m-d H:i:s') . '.' : '';
+            $expiryText = $info['expires_at_text'] ? ' Berlaku sampai ' . $info['expires_at_text'] . '.' : '';
 
             return [
                 'success' => true,
