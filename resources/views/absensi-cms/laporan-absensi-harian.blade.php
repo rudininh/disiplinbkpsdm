@@ -39,6 +39,10 @@
                     <i data-lucide="id-card" class="h-4 w-4"></i>
                     Laporan Absensi PPPK
                 </a>
+                <a href="{{ route('cms.analisa-absensi.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="radar" class="h-4 w-4"></i>
+                    Analisa Absensi
+                </a>
                 <a href="{{ route('cms.laporan-balai-kota.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="building-2" class="h-4 w-4"></i>
                     Laporan Balai Kota
@@ -73,7 +77,7 @@
             </header>
 
             <section class="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 lg:px-8">
-                <div class="grid gap-4 md:grid-cols-3">
+                <div class="grid gap-4 md:grid-cols-4">
                     <div class="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
                         <div class="flex items-center justify-between">
                             <p class="text-sm font-medium text-zinc-500">Total Data</p>
@@ -87,6 +91,19 @@
                             <i data-lucide="badge-check" class="h-5 w-5 text-emerald-600"></i>
                         </div>
                         <p class="mt-3 text-2xl font-semibold">{{ number_format($apelRows) }}</p>
+                    </div>
+                    <div class="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                        <div class="flex items-center justify-between">
+                            <p class="text-sm font-medium text-zinc-500">Data Tersedia</p>
+                            <i data-lucide="calendar-range" class="h-5 w-5 text-indigo-600"></i>
+                        </div>
+                        <p class="mt-3 text-sm font-semibold text-zinc-800">
+                            @if ($dataDateStart && $dataDateEnd)
+                                {{ \Carbon\Carbon::parse($dataDateStart)->format('d-m-Y') }} s/d {{ \Carbon\Carbon::parse($dataDateEnd)->format('d-m-Y') }}
+                            @else
+                                Belum ada data
+                            @endif
+                        </p>
                     </div>
                     <div class="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
                         <div class="flex items-center justify-between">

@@ -1125,6 +1125,7 @@ class AbsensiScraperService
                     'status_asn' => $row['status_asn'] ?: null,
                     'presensi_url' => $row['presensi_url'] ?: null,
                     'row_data' => $row,
+                    'row_hash' => $rowHash,
                     'fetched_at' => $meta['fetched_at'] ?? now(),
                 ]
             );
@@ -1311,6 +1312,10 @@ class AbsensiScraperService
                 continue;
             }
 
+            if ($this->hasEmptyPegawaiDetails($row)) {
+                continue;
+            }
+
             $historyUrl = (string) ($row['history_url'] ?? '');
             preg_match('/\/pegawai\/([^\/]+)\/history/i', $historyUrl, $matches);
             $pegawaiId = $matches[1] ?? null;
@@ -1342,6 +1347,38 @@ class AbsensiScraperService
         }
 
         return $stored;
+    }
+
+    protected function hasEmptyPegawaiDetails(array $row): bool
+    {
+        return $this->isRetirementYearNip($row['nip'] ?? null)
+            && $this->isEmptyPegawaiDetail($row['unit_kerja'] ?? null)
+            && $this->isEmptyPegawaiDetail($row['jabatan'] ?? null)
+            && $this->isEmptyPegawaiDetail($row['puskesmas'] ?? null)
+            && $this->isEmptyPegawaiDetail($row['device_id'] ?? null);
+    }
+
+    protected function isRetirementYearNip(mixed $value): bool
+    {
+        $nip = preg_replace('/\D+/', '', (string) $value);
+        if (! is_string($nip) || strlen($nip) < 4) {
+            return false;
+        }
+
+        $birthYear = (int) substr($nip, 0, 4);
+
+        return $birthYear > 0 && $birthYear <= 1970;
+    }
+
+    protected function isEmptyPegawaiDetail(mixed $value): bool
+    {
+        if ($value === null) {
+            return true;
+        }
+
+        $text = $this->normalizeText((string) $value);
+
+        return $text === '' || $text === '-';
     }
 
     protected function mergeCutiData(array $base, array $next): array

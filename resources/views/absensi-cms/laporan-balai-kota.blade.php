@@ -46,6 +46,10 @@
                     <i data-lucide="id-card" class="h-4 w-4"></i>
                     Laporan Absensi PPPK
                 </a>
+                <a href="{{ route('cms.analisa-absensi.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="radar" class="h-4 w-4"></i>
+                    Analisa Absensi
+                </a>
                 <a href="{{ route('cms.laporan-balai-kota.index') }}" class="flex items-center gap-3 rounded-md bg-white/10 px-3 py-2 text-sm font-medium">
                     <i data-lucide="building-2" class="h-4 w-4"></i>
                     Laporan Balai Kota

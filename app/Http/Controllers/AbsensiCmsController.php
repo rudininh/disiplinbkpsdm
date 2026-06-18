@@ -9,6 +9,7 @@ use App\Models\AbsensiPppk;
 use App\Models\AbsensiPppkReport;
 use App\Services\AbsensiScraperService;
 use Illuminate\Contracts\View\View;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
@@ -178,6 +179,53 @@ class AbsensiCmsController extends Controller
         ]);
     }
 
+    public function analisaAbsensi(Request $request): View
+    {
+        $date = (string) $request->input('date', now()->toDateString());
+        $dateStart = (string) $request->input('date_start', $date);
+        $dateEnd = (string) $request->input('date_end', $date);
+        $analysis = $this->analisaAbsensiData($request, $dateStart, $dateEnd);
+        $page = LengthAwarePaginator::resolveCurrentPage();
+        $perPage = 100;
+        $rows = $analysis['rows'];
+
+        $paginator = new LengthAwarePaginator(
+            $rows->forPage($page, $perPage)->values(),
+            $rows->count(),
+            $perPage,
+            $page,
+            [
+                'path' => $request->url(),
+                'query' => $request->query(),
+            ]
+        );
+
+        return view('absensi-cms.analisa-absensi', [
+            'date' => $date,
+            'dateStart' => $dateStart,
+            'dateEnd' => $dateEnd,
+            'rows' => $paginator,
+            'summary' => $analysis['summary'],
+            'skpdSummaries' => $analysis['skpd_summaries'],
+            'skpdOptions' => $this->skpdOptions(),
+        ]);
+    }
+
+    public function exportAnalisaAbsensi(Request $request): Response
+    {
+        $date = (string) $request->input('date', now()->toDateString());
+        $dateStart = (string) $request->input('date_start', $date);
+        $dateEnd = (string) $request->input('date_end', $date);
+        $analysis = $this->analisaAbsensiData($request, $dateStart, $dateEnd);
+        $filename = 'analisa-absensi-' . $dateStart . '-sd-' . $dateEnd . '.xls';
+
+        return response($this->analisaAbsensiExcelTable($analysis['rows'], $dateStart, $dateEnd), 200, [
+            'Content-Type' => 'application/vnd.ms-excel; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            'Cache-Control' => 'max-age=0, no-cache, must-revalidate, proxy-revalidate',
+        ]);
+    }
+
     public function laporanAbsensiHarian(Request $request): View
     {
         $query = $this->dailyReportQuery($request)->latest('tanggal')->latest('id');
@@ -187,6 +235,8 @@ class AbsensiCmsController extends Controller
             'totalRows' => AbsensiDailyReport::query()->count(),
             'apelRows' => AbsensiDailyReport::query()->whereNotNull('apel')->where('apel', '<>', '-')->count(),
             'lastFetchedAt' => AbsensiDailyReport::query()->max('fetched_at'),
+            'dataDateStart' => AbsensiDailyReport::query()->min('tanggal'),
+            'dataDateEnd' => AbsensiDailyReport::query()->max('tanggal'),
             'skpdOptions' => $this->skpdOptions(),
             'skpdMap' => $this->skpdMap(),
             'result' => null,
@@ -221,6 +271,8 @@ class AbsensiCmsController extends Controller
             'totalRows' => AbsensiDailyReport::query()->count(),
             'apelRows' => AbsensiDailyReport::query()->whereNotNull('apel')->where('apel', '<>', '-')->count(),
             'lastFetchedAt' => AbsensiDailyReport::query()->max('fetched_at'),
+            'dataDateStart' => AbsensiDailyReport::query()->min('tanggal'),
+            'dataDateEnd' => AbsensiDailyReport::query()->max('tanggal'),
             'skpdOptions' => $this->skpdOptions(),
             'skpdMap' => $this->skpdMap(),
             'result' => $result,
@@ -243,6 +295,8 @@ class AbsensiCmsController extends Controller
                 ->where('jam_masuk', '<>', '00:00:00')
                 ->count(),
             'lastFetchedAt' => AbsensiPppkReport::query()->max('fetched_at') ?? AbsensiPppk::query()->max('fetched_at'),
+            'dataDateStart' => AbsensiPppkReport::query()->min('tanggal'),
+            'dataDateEnd' => AbsensiPppkReport::query()->max('tanggal'),
             'skpdOptions' => $this->skpdOptions(),
             'skpdMap' => $this->skpdMap(),
             'result' => null,
@@ -282,6 +336,8 @@ class AbsensiCmsController extends Controller
                 ->where('jam_masuk', '<>', '00:00:00')
                 ->count(),
             'lastFetchedAt' => AbsensiPppkReport::query()->max('fetched_at') ?? AbsensiPppk::query()->max('fetched_at'),
+            'dataDateStart' => AbsensiPppkReport::query()->min('tanggal'),
+            'dataDateEnd' => AbsensiPppkReport::query()->max('tanggal'),
             'skpdOptions' => $this->skpdOptions(),
             'skpdMap' => $this->skpdMap(),
             'result' => $result,
@@ -503,6 +559,560 @@ class AbsensiCmsController extends Controller
         }
 
         return $query;
+    }
+
+    private function analisaAbsensiData(Request $request, string $dateStart, string $dateEnd): array
+    {
+        $people = $this->analisaAbsensiPeople($request);
+        $nips = $people->pluck('nip')->filter()->unique()->values();
+        $dailyRows = AbsensiDailyReport::query()
+            ->whereDate('tanggal', '>=', $dateStart)
+            ->whereDate('tanggal', '<=', $dateEnd)
+            ->whereIn('nip', $nips)
+            ->get()
+            ->groupBy(fn (AbsensiDailyReport $row) => $this->normalizeNip($row->nip) ?? (string) $row->id);
+        $pppkRows = AbsensiPppkReport::query()
+            ->whereDate('tanggal', '>=', $dateStart)
+            ->whereDate('tanggal', '<=', $dateEnd)
+            ->whereIn('nip', $nips)
+            ->get()
+            ->groupBy(fn (AbsensiPppkReport $row) => $this->normalizeNip($row->nip) ?? (string) $row->id);
+        $cutiRows = AbsensiCutiReport::query()
+            ->whereDate('tanggal_mulai', '<=', $dateEnd)
+            ->whereDate('tanggal_selesai', '>=', $dateStart)
+            ->get()
+            ->filter(fn (AbsensiCutiReport $row) => $nips->contains($this->normalizeNip($row->nip)))
+            ->groupBy(fn (AbsensiCutiReport $row) => $this->normalizeNip($row->nip) ?? (string) $row->id);
+
+        $reportDates = $dailyRows
+            ->flatten(1)
+            ->pluck('tanggal')
+            ->merge($pppkRows->flatten(1)->pluck('tanggal'))
+            ->map(fn ($date) => optional($date)->format('Y-m-d') ?: (string) $date)
+            ->filter()
+            ->unique()
+            ->sort()
+            ->reject(fn (string $date) => $this->isNonWorkingDate($date))
+            ->values();
+        $minOccurrences = max(1, (int) $request->input('min_occurrences', 3));
+        $minConsecutiveDays = max(2, (int) $request->input('min_consecutive_days', 3));
+        $type = (string) $request->input('type', 'all');
+        $dailyStatusRows = collect();
+        $anomalyRows = collect();
+
+        foreach ($people as $person) {
+            $personDailyRows = collect($dailyRows->get($person['nip'], collect()));
+            $personPppkRows = collect($pppkRows->get($person['nip'], collect()));
+            $personCutiRows = collect($cutiRows->get($person['nip'], collect()));
+            $missingInDates = collect();
+            $missingOutDates = collect();
+            $missingDates = collect();
+            $lateDates = collect();
+            $earlyDates = collect();
+
+            $personReportDates = $reportDates
+                ->reject(fn (string $date) => $this->isNonWorkingDateForPerson($date, $person))
+                ->values();
+
+            foreach ($personReportDates as $date) {
+                $daily = $personDailyRows->first(fn (AbsensiDailyReport $row) => optional($row->tanggal)->format('Y-m-d') === $date);
+                $pppk = $personPppkRows->first(fn (AbsensiPppkReport $row) => optional($row->tanggal)->format('Y-m-d') === $date);
+                $cuti = $personCutiRows->first(fn (AbsensiCutiReport $row) => $this->isDateInsideCuti($date, $row));
+                $hasCuti = $cuti instanceof AbsensiCutiReport;
+
+                if ($hasCuti) {
+                    continue;
+                }
+
+                $checkIn = $daily instanceof AbsensiDailyReport ? $daily->pagi : ($pppk instanceof AbsensiPppkReport ? $pppk->jam_masuk : null);
+                $checkOut = $daily instanceof AbsensiDailyReport ? $daily->pulang : ($pppk instanceof AbsensiPppkReport ? $pppk->jam_pulang : null);
+                $hasCheckIn = $this->isValidApelValue($checkIn);
+                $hasCheckOut = $this->isValidApelValue($checkOut);
+
+                if (! $hasCheckIn) {
+                    $missingInDates->push($date);
+                    $missingDates->push($date);
+                }
+
+                if (! $hasCheckOut) {
+                    $missingOutDates->push($date);
+                    $missingDates->push($date);
+                }
+                $schedule = $this->workScheduleForDate($date, $person);
+
+                if ($schedule !== null && $this->isTimeAfter($checkIn, $schedule['masuk'])) {
+                    $lateDates->push($date . ' ' . $this->normalizeTimeLabel($checkIn) . ' > ' . $schedule['masuk']);
+                }
+
+                if ($schedule !== null && $this->isTimeBefore($checkOut, $schedule['pulang'])) {
+                    $earlyDates->push($date . ' ' . $this->normalizeTimeLabel($checkOut) . ' < ' . $schedule['pulang']);
+                }
+            }
+
+            $missingDates = $missingDates->unique()->values();
+            $maxStreak = $this->maxConsecutiveDateCount($missingDates, $personReportDates);
+            $dailyStatusRows->push([
+                ...$person,
+                'status' => $missingDates->isNotEmpty() ? 'Tanpa Keterangan' : 'Tidak Anomali',
+            ]);
+
+            if ($missingInDates->isNotEmpty()) {
+                $anomalyRows->push($this->analisaAnomalyRow(
+                    $person,
+                    'Tidak Absen Masuk',
+                    'Absen masuk kosong atau tidak ada',
+                    $missingInDates,
+                    $missingInDates->count(),
+                    $this->maxConsecutiveDateCount($missingInDates, $personReportDates)
+                ));
+            }
+
+            if ($missingOutDates->isNotEmpty()) {
+                $anomalyRows->push($this->analisaAnomalyRow(
+                    $person,
+                    'Tidak Absen Pulang',
+                    'Absen pulang kosong atau tidak ada',
+                    $missingOutDates,
+                    $missingOutDates->count(),
+                    $this->maxConsecutiveDateCount($missingOutDates, $personReportDates)
+                ));
+            }
+
+            if ($maxStreak >= $minConsecutiveDays) {
+                $anomalyRows->push($this->analisaAnomalyRow(
+                    $person,
+                    'Tidak Absen Berturut-turut',
+                    'Tidak absen masuk atau pulang beberapa hari berurutan',
+                    $missingDates,
+                    $missingDates->count(),
+                    $maxStreak
+                ));
+            }
+
+            if ($lateDates->count() >= $minOccurrences) {
+                $anomalyRows->push($this->analisaAnomalyRow(
+                    $person,
+                    'Sering Terlambat',
+                    'Absen masuk melebihi jadwal harian',
+                    $lateDates,
+                    $lateDates->count(),
+                    0
+                ));
+            }
+
+            if ($earlyDates->count() >= $minOccurrences) {
+                $anomalyRows->push($this->analisaAnomalyRow(
+                    $person,
+                    'Pulang Cepat',
+                    'Absen pulang sebelum jadwal harian',
+                    $earlyDates,
+                    $earlyDates->count(),
+                    0
+                ));
+            }
+        }
+
+        $filteredRows = $anomalyRows
+            ->when($type !== 'all', fn ($rows) => $rows->where('kategori', $type))
+            ->when($request->filled('search'), function ($rows) use ($request) {
+                $search = Str::of((string) $request->input('search'))->lower()->squish()->toString();
+
+                return $rows->filter(function (array $row) use ($search) {
+                    $haystack = Str::of(implode(' ', [
+                        $row['nip'],
+                        $row['nama'],
+                        $row['nama_skpd'],
+                        $row['unit_kerja'],
+                        $row['jabatan'],
+                        $row['alasan'],
+                        $row['detail_tanggal'],
+                    ]))->lower()->toString();
+
+                    return str_contains($haystack, $search);
+                });
+            })
+            ->sortBy([
+                ['nama_skpd', 'asc'],
+                ['unit_kerja', 'asc'],
+                ['kategori', 'asc'],
+                ['nama', 'asc'],
+            ])
+            ->values();
+
+        $summary = [
+            'total_pegawai' => $people->count(),
+            'hari_data' => $reportDates->count(),
+            'tidak_absen_masuk' => $anomalyRows->where('kategori', 'Tidak Absen Masuk')->count(),
+            'tidak_absen_pulang' => $anomalyRows->where('kategori', 'Tidak Absen Pulang')->count(),
+            'tidak_absen' => $anomalyRows->whereIn('kategori', ['Tidak Absen Masuk', 'Tidak Absen Pulang'])->count(),
+            'berturut_turut' => $anomalyRows->where('kategori', 'Tidak Absen Berturut-turut')->count(),
+            'terlambat' => $anomalyRows->where('kategori', 'Sering Terlambat')->count(),
+            'pulang_cepat' => $anomalyRows->where('kategori', 'Pulang Cepat')->count(),
+            'anomali' => $anomalyRows->count(),
+            'filtered_anomali' => $filteredRows->count(),
+        ];
+
+        $skpdSummaries = $dailyStatusRows
+            ->groupBy('nama_skpd')
+            ->map(fn ($rows, string $skpd) => [
+                'skpd' => $skpd,
+                'total_pegawai' => $rows->count(),
+                'hadir' => max(0, $rows->count() - $rows->where('status', 'Tanpa Keterangan')->count()),
+                'cuti' => 0,
+                'anomali' => $rows->where('status', 'Tanpa Keterangan')->count(),
+            ])
+            ->sortByDesc('anomali')
+            ->values();
+
+        return [
+            'rows' => $filteredRows,
+            'summary' => $summary,
+            'skpd_summaries' => $skpdSummaries,
+        ];
+    }
+
+    private function analisaAnomalyRow(array $person, string $kategori, string $alasan, $dates, int $jumlahHari, int $streak): array
+    {
+        return [
+            ...$person,
+            'status' => 'Anomali',
+            'kategori' => $kategori,
+            'alasan' => $alasan,
+            'jumlah_hari' => $jumlahHari,
+            'streak_hari' => $streak,
+            'detail_tanggal' => collect($dates)->take(12)->implode(', ') . (collect($dates)->count() > 12 ? ', ...' : ''),
+            'pagi' => '-',
+            'pulang' => '-',
+            'apel' => '-',
+            'jam_masuk_pppk' => '-',
+            'jam_pulang_pppk' => '-',
+            'jenis_cuti' => '-',
+            'tanggal_cuti' => '-',
+        ];
+    }
+
+    private function isDateInsideCuti(string $date, AbsensiCutiReport $cuti): bool
+    {
+        $start = optional($cuti->tanggal_mulai)->format('Y-m-d');
+        $end = optional($cuti->tanggal_selesai)->format('Y-m-d');
+
+        return $start !== null && $end !== null && $start <= $date && $end >= $date;
+    }
+
+    private function isNonWorkingDate(string $date): bool
+    {
+        try {
+            $carbon = \Carbon\Carbon::parse($date);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        return $carbon->isWeekend() || array_key_exists($carbon->format('Y-m-d'), $this->nationalNonWorkingDates());
+    }
+
+    private function isNonWorkingDateForPerson(string $date, array $person): bool
+    {
+        try {
+            $carbon = \Carbon\Carbon::parse($date);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        if (array_key_exists($carbon->format('Y-m-d'), $this->nationalNonWorkingDates())) {
+            return true;
+        }
+
+        $type = $this->attendanceTypeKey((string) ($person['jenis_presensi'] ?? ''));
+
+        return match ($type) {
+            'six_day', 'six_day_school' => $carbon->isSunday(),
+            'shift' => false,
+            default => $carbon->isWeekend(),
+        };
+    }
+
+    private function workScheduleForDate(string $date, array $person): ?array
+    {
+        try {
+            $dayOfWeek = \Carbon\Carbon::parse($date)->dayOfWeekIso;
+        } catch (\Throwable) {
+            $dayOfWeek = 1;
+        }
+
+        $type = $this->attendanceTypeKey((string) ($person['jenis_presensi'] ?? ''));
+        if ($type === 'shift') {
+            return null;
+        }
+
+        if ($dayOfWeek === 5) {
+            return [
+                'masuk' => '07:30',
+                'pulang' => '11:00',
+            ];
+        }
+
+        if ($dayOfWeek === 6 && ($type === 'six_day' || $type === 'six_day_school')) {
+            return [
+                'masuk' => '08:00',
+                'pulang' => '16:30',
+            ];
+        }
+
+        return [
+            'masuk' => '08:00',
+            'pulang' => '16:30',
+        ];
+    }
+
+    private function attendanceTypeKey(string $value): string
+    {
+        $value = Str::of($value)->lower()->squish()->toString();
+
+        return match (true) {
+            str_contains($value, 'shift') => 'shift',
+            str_contains($value, 'rumah sakit') || str_contains($value, 'puskesmas') => 'shift',
+            str_contains($value, '6 hari') && str_contains($value, 'sekolah') => 'six_day_school',
+            str_contains($value, '6 hari') => 'six_day',
+            str_contains($value, '5 hari') && str_contains($value, 'sekolah') => 'five_day_school',
+            default => 'five_day',
+        };
+    }
+
+    private function nationalNonWorkingDates(): array
+    {
+        return [
+            '2026-01-01' => 'Tahun Baru 2026 Masehi',
+            '2026-01-16' => 'Isra Mikraj Nabi Muhammad SAW',
+            '2026-02-16' => 'Cuti Bersama Tahun Baru Imlek 2577 Kongzili',
+            '2026-02-17' => 'Tahun Baru Imlek 2577 Kongzili',
+            '2026-03-18' => 'Cuti Bersama Hari Suci Nyepi Tahun Baru Saka 1948',
+            '2026-03-19' => 'Hari Suci Nyepi Tahun Baru Saka 1948',
+            '2026-03-20' => 'Cuti Bersama Idul Fitri 1447 Hijriah',
+            '2026-03-21' => 'Idul Fitri 1447 Hijriah',
+            '2026-03-22' => 'Idul Fitri 1447 Hijriah',
+            '2026-03-23' => 'Cuti Bersama Idul Fitri 1447 Hijriah',
+            '2026-03-24' => 'Cuti Bersama Idul Fitri 1447 Hijriah',
+            '2026-04-03' => 'Wafat Yesus Kristus',
+            '2026-04-05' => 'Hari Kebangkitan Yesus Kristus',
+            '2026-05-01' => 'Hari Buruh Internasional',
+            '2026-05-14' => 'Kenaikan Yesus Kristus',
+            '2026-05-15' => 'Cuti Bersama Kenaikan Yesus Kristus',
+            '2026-05-27' => 'Idul Adha 1447 Hijriah',
+            '2026-05-28' => 'Cuti Bersama Idul Adha 1447 Hijriah',
+            '2026-05-31' => 'Hari Raya Waisak 2570 BE',
+            '2026-06-01' => 'Hari Lahir Pancasila',
+            '2026-06-16' => '1 Muharram 1448 Hijriah',
+            '2026-08-17' => 'Proklamasi Kemerdekaan RI',
+            '2026-08-25' => 'Maulid Nabi Muhammad SAW',
+            '2026-12-24' => 'Cuti Bersama Hari Natal',
+            '2026-12-25' => 'Hari Natal',
+        ];
+    }
+
+    private function maxConsecutiveDateCount($dates, $reportDates): int
+    {
+        $dateLookup = collect($dates)->flip();
+        $max = 0;
+        $current = 0;
+
+        foreach ($reportDates as $date) {
+            if ($dateLookup->has($date)) {
+                $current++;
+                $max = max($max, $current);
+                continue;
+            }
+
+            $current = 0;
+        }
+
+        return $max;
+    }
+
+    private function isTimeAfter(?string $value, string $threshold): bool
+    {
+        $time = $this->timeToSeconds($value);
+        $limit = $this->timeToSeconds($threshold);
+
+        return $time !== null && $limit !== null && $time > $limit;
+    }
+
+    private function isTimeBefore(?string $value, string $threshold): bool
+    {
+        $time = $this->timeToSeconds($value);
+        $limit = $this->timeToSeconds($threshold);
+
+        return $time !== null && $limit !== null && $time < $limit;
+    }
+
+    private function timeToSeconds(?string $value): ?int
+    {
+        $value = trim((string) $value);
+        if ($value === '' || $value === '-' || $value === '00:00:00') {
+            return null;
+        }
+
+        if (preg_match('/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/', $value, $matches) !== 1) {
+            return null;
+        }
+
+        return ((int) $matches[1] * 3600) + ((int) $matches[2] * 60) + (int) ($matches[3] ?? 0);
+    }
+
+    private function normalizeTimeLabel(?string $value): string
+    {
+        return trim((string) $value) ?: '-';
+    }
+
+    private function analisaAbsensiPeople(Request $request)
+    {
+        $source = (string) $request->input('source', 'all');
+        $people = collect();
+        $pppkParuhWaktuNips = $this->analisaPppkParuhWaktuNips();
+
+        if ($source !== 'pppk') {
+            $pnsQuery = AbsensiPegawai::query()->whereNotNull('nip');
+            $this->applyPegawaiSkpdIdFilter($pnsQuery, $request->input('skpd_id'));
+
+            if ($request->filled('unit_kerja')) {
+                $pnsQuery->where('unit_kerja', (string) $request->input('unit_kerja'));
+            }
+
+            $people = $people->merge($pnsQuery->get()
+                ->filter(fn (AbsensiPegawai $pegawai) => $this->hasActiveJabatan($pegawai->jabatan)
+                    && ! $pppkParuhWaktuNips->contains($this->normalizeNip($pegawai->nip)))
+                ->map(fn (AbsensiPegawai $pegawai) => $this->analisaPnsPerson($pegawai)));
+        }
+
+        if ($source !== 'pns') {
+            $pppkQuery = AbsensiPppk::query()->whereNotNull('nip');
+
+            if ($request->filled('skpd_id')) {
+                $pppkQuery->where('skpd_id', (int) $request->input('skpd_id'));
+            }
+
+            if ($request->filled('unit_kerja')) {
+                $pppkQuery->where('unit_kerja', (string) $request->input('unit_kerja'));
+            }
+
+            $people = $people->merge($pppkQuery->get()
+                ->filter(fn (AbsensiPppk $pppk) => $this->hasActiveJabatan($pppk->jabatan) && ! $this->isPppkParuhWaktu($pppk))
+                ->map(fn (AbsensiPppk $pppk) => $this->analisaPppkPerson($pppk)));
+        }
+
+        return $people
+            ->filter(fn (array $person) => ! empty($person['nip']))
+            ->unique(fn (array $person) => $person['source'] . ':' . $person['nip'])
+            ->values();
+    }
+
+    private function analisaPppkParuhWaktuNips()
+    {
+        return AbsensiDailyReport::query()
+            ->whereNotNull('nip')
+            ->where(function ($query) {
+                $query->where('pangkat', '()')
+                    ->orWhere('pangkat', 'like', '%paruh waktu%')
+                    ->orWhere('pangkat', 'like', '%paruh_waktu%')
+                    ->orWhere('pangkat', 'like', '%part time%')
+                    ->orWhere('pangkat', 'like', '%part-time%');
+            })
+            ->pluck('nip')
+            ->map(fn ($nip) => $this->normalizeNip($nip))
+            ->filter()
+            ->unique()
+            ->values();
+    }
+    private function analisaPnsPerson(AbsensiPegawai $pegawai): array
+    {
+        $skpd = $this->skpdInfoFromPegawaiSkpd((string) $pegawai->skpd);
+
+        return [
+            'source' => 'PNS',
+            'nip' => $this->normalizeNip($pegawai->nip),
+            'nama' => (string) $pegawai->nama,
+            'pangkat' => (string) $pegawai->pangkat_golongan,
+            'jabatan' => (string) $pegawai->jabatan,
+            'skpd_id' => $skpd['id'],
+            'kode_skpd' => $skpd['kode'],
+            'nama_skpd' => $skpd['nama'],
+            'unit_kerja' => (string) ($pegawai->unit_kerja ?: $skpd['nama']),
+            'jenis_presensi' => '5 Hari Kerja',
+        ];
+    }
+
+    private function analisaPppkPerson(AbsensiPppk $pppk): array
+    {
+        return [
+            'source' => 'PPPK',
+            'nip' => $this->normalizeNip($pppk->nip),
+            'nama' => (string) $pppk->nama,
+            'pangkat' => (string) ($pppk->pangkat ?: 'PPPK'),
+            'jabatan' => (string) $pppk->jabatan,
+            'skpd_id' => (int) $pppk->skpd_id,
+            'kode_skpd' => (string) $pppk->kode_skpd,
+            'nama_skpd' => (string) $pppk->nama_skpd,
+            'unit_kerja' => (string) ($pppk->unit_kerja ?: $pppk->nama_skpd),
+            'jenis_presensi' => (string) ($pppk->jenis_presensi ?: '5 Hari Kerja'),
+        ];
+    }
+
+    private function applyPegawaiSkpdIdFilter($query, mixed $skpdId): void
+    {
+        if ($skpdId === null || $skpdId === '') {
+            return;
+        }
+
+        $skpd = $this->skpdMap()[(int) $skpdId] ?? null;
+        if (! is_array($skpd)) {
+            return;
+        }
+
+        $query->where(function ($builder) use ($skpd) {
+            if (! empty($skpd['kode'])) {
+                $builder->orWhere('skpd', 'like', '%' . $skpd['kode'] . '%');
+            }
+
+            if (! empty($skpd['nama'])) {
+                $builder->orWhere('skpd', 'like', '%' . $skpd['nama'] . '%');
+            }
+        });
+    }
+
+    private function skpdInfoFromPegawaiSkpd(string $value): array
+    {
+        foreach ($this->skpdMap() as $id => $skpd) {
+            $kode = (string) ($skpd['kode'] ?? '');
+            $nama = (string) ($skpd['nama'] ?? '');
+
+            if (($kode !== '' && str_contains($value, $kode)) || ($nama !== '' && str_contains($value, $nama))) {
+                return [
+                    'id' => (int) $id,
+                    'kode' => $kode,
+                    'nama' => $nama,
+                ];
+            }
+        }
+
+        return [
+            'id' => null,
+            'kode' => '',
+            'nama' => $value !== '' ? $value : 'Tidak diketahui',
+        ];
+    }
+
+    private function hasValidDailyAttendance(?AbsensiDailyReport $row): bool
+    {
+        return $row instanceof AbsensiDailyReport
+            && ($this->isValidApelValue($row->pagi)
+                || $this->isValidApelValue($row->pulang)
+                || $this->isValidApelValue($row->apel));
+    }
+
+    private function hasValidPppkAttendance(?AbsensiPppkReport $row): bool
+    {
+        return $row instanceof AbsensiPppkReport
+            && ($this->isValidApelValue($row->jam_masuk)
+                || $this->isValidApelValue($row->jam_pulang));
     }
 
     private function balaiKotaReportRows(string $date): array
@@ -887,7 +1497,22 @@ class AbsensiCmsController extends Controller
     {
         $value = trim((string) $value);
 
-        return $value === '()';
+        return $value === '()' || str($value)->lower()->contains([
+            'paruh waktu',
+            'paruh_waktu',
+            'part time',
+            'part-time',
+        ]);
+    }
+
+    private function isPppkParuhWaktu(AbsensiPppk $pppk): bool
+    {
+        return collect([
+            $pppk->pangkat,
+            $pppk->status_asn,
+            $pppk->jabatan,
+            $pppk->jenis_presensi,
+        ])->contains(fn ($value) => $this->isPppkParuhWaktuPangkat($value));
     }
 
     private function compareBalaiKotaPegawaiRows(array $a, array $b): int
@@ -1108,6 +1733,58 @@ class AbsensiCmsController extends Controller
                 . '<td>' . $escape($report->status) . '</td>'
                 . '<td>' . $escape($report->upload_url) . '</td>'
                 . '<td>' . $escape(optional($report->fetched_at)->format('Y-m-d H:i:s')) . '</td>'
+                . '</tr>';
+        }
+
+        $rows[] = '</tbody></table></body></html>';
+
+        return "\xEF\xBB\xBF" . implode('', $rows);
+    }
+
+    private function analisaAbsensiExcelTable($reports, string $dateStart, string $dateEnd): string
+    {
+        $escape = static fn ($value) => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $rows = [
+            '<html><head><meta charset="UTF-8"></head><body>',
+            '<table border="1">',
+            '<thead><tr>'
+                . '<th>No</th>'
+                . '<th>Tanggal Mulai</th>'
+                . '<th>Tanggal Selesai</th>'
+                . '<th>Kategori</th>'
+                . '<th>Alasan</th>'
+                . '<th>Jumlah Hari/Kejadian</th>'
+                . '<th>Streak Hari</th>'
+                . '<th>Detail Tanggal</th>'
+                . '<th>Jenis ASN</th>'
+                . '<th>Kode SKPD</th>'
+                . '<th>SKPD</th>'
+                . '<th>Unit Kerja</th>'
+                . '<th>NIP</th>'
+                . '<th>Nama</th>'
+                . '<th>Pangkat</th>'
+                . '<th>Jabatan</th>'
+                . '</tr></thead><tbody>',
+        ];
+
+        foreach ($reports as $index => $report) {
+            $rows[] = '<tr>'
+                . '<td>' . ($index + 1) . '</td>'
+                . '<td>' . $escape($dateStart) . '</td>'
+                . '<td>' . $escape($dateEnd) . '</td>'
+                . '<td>' . $escape($report['kategori'] ?? '') . '</td>'
+                . '<td>' . $escape($report['alasan'] ?? '') . '</td>'
+                . '<td>' . $escape($report['jumlah_hari'] ?? '') . '</td>'
+                . '<td>' . $escape($report['streak_hari'] ?? '') . '</td>'
+                . '<td>' . $escape($report['detail_tanggal'] ?? '') . '</td>'
+                . '<td>' . $escape($report['source'] ?? '') . '</td>'
+                . '<td>' . $escape($report['kode_skpd'] ?? '') . '</td>'
+                . '<td>' . $escape($report['nama_skpd'] ?? '') . '</td>'
+                . '<td>' . $escape($report['unit_kerja'] ?? '') . '</td>'
+                . '<td style="mso-number-format:\'\\@\';">' . $escape($report['nip'] ?? '') . '</td>'
+                . '<td>' . $escape($report['nama'] ?? '') . '</td>'
+                . '<td>' . $escape($report['pangkat'] ?? '') . '</td>'
+                . '<td>' . $escape($report['jabatan'] ?? '') . '</td>'
                 . '</tr>';
         }
 
