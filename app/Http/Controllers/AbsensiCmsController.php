@@ -8,6 +8,8 @@ use App\Models\AbsensiPegawai;
 use App\Models\AbsensiPppk;
 use App\Models\AbsensiPppkReport;
 use App\Services\AbsensiScraperService;
+use App\Services\PetaJabatanExcelService;
+use App\Services\TppScraperService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
@@ -17,7 +19,11 @@ use Illuminate\Support\Str;
 
 class AbsensiCmsController extends Controller
 {
-    public function __construct(private readonly AbsensiScraperService $scraper)
+    public function __construct(
+        private readonly AbsensiScraperService $scraper,
+        private readonly TppScraperService $tppScraper,
+        private readonly PetaJabatanExcelService $petaJabatanExcel
+    )
     {
     }
 
@@ -223,6 +229,66 @@ class AbsensiCmsController extends Controller
             'Content-Type' => 'application/vnd.ms-excel; charset=UTF-8',
             'Content-Disposition' => 'attachment; filename="' . $filename . '"',
             'Cache-Control' => 'max-age=0, no-cache, must-revalidate, proxy-revalidate',
+        ]);
+    }
+
+    public function petaJabatanReal(Request $request): View
+    {
+        $payload = $this->tppScraper->latestPetaJabatanReal();
+        $viewMode = (string) $request->input('view', 'tree');
+        $selectedSheet = $request->filled('sheet') ? (int) $request->input('sheet') : 0;
+
+        return view('absensi-cms.peta-jabatan-real', [
+            'payload' => $payload,
+            'excelComparison' => $this->petaJabatanExcel->comparison($payload, $selectedSheet),
+            'viewMode' => in_array($viewMode, ['tree', 'org'], true) ? $viewMode : 'tree',
+            'selectedSheet' => $selectedSheet,
+            'result' => null,
+            'startIndex' => 1,
+            'endIndex' => 35,
+        ]);
+    }
+
+    public function fetchPetaJabatanReal(Request $request): View
+    {
+        $data = $request->validate([
+            'start_index' => ['nullable', 'integer', 'min:1'],
+            'end_index' => ['nullable', 'integer', 'min:1', 'gte:start_index'],
+        ]);
+        $credentials = $this->tppCredentials();
+
+        if ($credentials === null) {
+            $payload = $this->tppScraper->latestPetaJabatanReal();
+
+            return view('absensi-cms.peta-jabatan-real', [
+                'payload' => $payload,
+                'excelComparison' => $this->petaJabatanExcel->comparison($payload, 0),
+                'viewMode' => 'tree',
+                'selectedSheet' => 0,
+                'result' => [
+                    'success' => false,
+                    'message' => 'TPP_USERNAME dan TPP_PASSWORD belum diatur di .env.',
+                ],
+                'startIndex' => (int) ($data['start_index'] ?? 1),
+                'endIndex' => (int) ($data['end_index'] ?? 35),
+            ]);
+        }
+
+        $result = $this->tppScraper->scrapePetaJabatanReal(
+            $credentials['username'],
+            $credentials['password'],
+            (int) ($data['start_index'] ?? 1),
+            (int) ($data['end_index'] ?? 35)
+        );
+
+        return view('absensi-cms.peta-jabatan-real', [
+            'payload' => $result,
+            'excelComparison' => $this->petaJabatanExcel->comparison($result, 0),
+            'viewMode' => 'tree',
+            'selectedSheet' => 0,
+            'result' => $result,
+            'startIndex' => (int) ($data['start_index'] ?? 1),
+            'endIndex' => (int) ($data['end_index'] ?? 35),
         ]);
     }
 
@@ -1797,6 +1863,21 @@ class AbsensiCmsController extends Controller
     {
         $username = trim((string) config('services.absensi.username'));
         $password = (string) config('services.absensi.password');
+
+        if ($username === '' || $password === '') {
+            return null;
+        }
+
+        return [
+            'username' => $username,
+            'password' => $password,
+        ];
+    }
+
+    private function tppCredentials(): ?array
+    {
+        $username = trim((string) config('services.tpp.username'));
+        $password = (string) config('services.tpp.password');
 
         if ($username === '' || $password === '') {
             return null;

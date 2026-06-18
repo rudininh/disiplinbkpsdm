@@ -66,6 +66,13 @@ return [
         ],
     ],
 
+    'tpp' => [
+        'base_url' => env('TPP_BASE_URL', 'https://tpp.banjarmasinkota.go.id'),
+        'username' => env('TPP_USERNAME'),
+        'password' => env('TPP_PASSWORD'),
+        'peta_jabatan_excel_path' => env('TPP_PETA_JABATAN_EXCEL_PATH', 'C:/Users/RUDINI/Downloads/Lampiran Perubahan kedua dan ketiga gabung Peta Jabatan 2026.xlsx'),
+    ],
+
     'ses' => [
         'key' => env('AWS_ACCESS_KEY_ID'),
         'secret' => env('AWS_SECRET_ACCESS_KEY'),

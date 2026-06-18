@@ -17,6 +17,8 @@ Route::prefix('cms')->name('cms.')->group(function () {
     Route::post('/pegawai/fetch', [AbsensiCmsController::class, 'fetchPegawai'])->name('pegawai.fetch');
     Route::get('/analisa-absensi', [AbsensiCmsController::class, 'analisaAbsensi'])->name('analisa-absensi.index');
     Route::get('/analisa-absensi/export', [AbsensiCmsController::class, 'exportAnalisaAbsensi'])->name('analisa-absensi.export');
+    Route::get('/peta-jabatan-real', [AbsensiCmsController::class, 'petaJabatanReal'])->name('peta-jabatan-real.index');
+    Route::post('/peta-jabatan-real/fetch', [AbsensiCmsController::class, 'fetchPetaJabatanReal'])->name('peta-jabatan-real.fetch');
     Route::get('/laporan-absensi-harian', [AbsensiCmsController::class, 'laporanAbsensiHarian'])->name('laporan-absensi-harian.index');
     Route::post('/laporan-absensi-harian/fetch', [AbsensiCmsController::class, 'fetchLaporanAbsensiHarian'])->name('laporan-absensi-harian.fetch');
     Route::get('/laporan-pppk', [AbsensiCmsController::class, 'laporanPppk'])->name('laporan-pppk.index');
