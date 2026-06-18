@@ -3,6 +3,7 @@
 use App\Http\Controllers\AbsensiCmsController;
 use App\Http\Controllers\AbsensiScraperController;
 use App\Http\Controllers\DisiplinScraperController;
+use App\Http\Controllers\SiasnProfileController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', [AbsensiCmsController::class, 'index'])->name('dashboard');
@@ -19,6 +20,9 @@ Route::prefix('cms')->name('cms.')->group(function () {
     Route::get('/analisa-absensi/export', [AbsensiCmsController::class, 'exportAnalisaAbsensi'])->name('analisa-absensi.export');
     Route::get('/peta-jabatan-real', [AbsensiCmsController::class, 'petaJabatanReal'])->name('peta-jabatan-real.index');
     Route::post('/peta-jabatan-real/fetch', [AbsensiCmsController::class, 'fetchPetaJabatanReal'])->name('peta-jabatan-real.fetch');
+    Route::get('/siasn', [SiasnProfileController::class, 'index'])->name('siasn.index');
+    Route::post('/siasn/fetch', [SiasnProfileController::class, 'fetch'])->name('siasn.fetch');
+    Route::post('/siasn/sync-education-locations', [SiasnProfileController::class, 'syncEducationLocations'])->name('siasn.sync-education-locations');
     Route::get('/laporan-absensi-harian', [AbsensiCmsController::class, 'laporanAbsensiHarian'])->name('laporan-absensi-harian.index');
     Route::post('/laporan-absensi-harian/fetch', [AbsensiCmsController::class, 'fetchLaporanAbsensiHarian'])->name('laporan-absensi-harian.fetch');
     Route::get('/laporan-pppk', [AbsensiCmsController::class, 'laporanPppk'])->name('laporan-pppk.index');

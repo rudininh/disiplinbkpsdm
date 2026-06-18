@@ -28,6 +28,7 @@ class AbsensiScraperService
     private const ADMIN_CUTI_PATH = '/admin/cuti';
     private const ADMIN_LAPORAN_PATH = '/admin/laporan';
     private const ADMIN_LAPORAN_TANGGAL_PATH = '/admin/laporan/tanggal';
+    private const ADMIN_LOKASI_PATH = '/admin/lokasi';
     private const ADMIN_PPPK_PATH = '/admin/pppk';
     private const SUPERADMIN_PEGAWAI_PATH = '/superadmin/pegawai';
     private const SENSITIVE_HEADER_KEYWORDS = ['nip', 'nama', 'pegawai', 'nik', 'alamat', 'telepon', 'hp', 'email'];
@@ -710,6 +711,200 @@ class AbsensiScraperService
             ],
             'data' => $parsed,
             'stored_rows' => $storedRows,
+        ];
+    }
+
+    public function scrapeLokasiPegawai(
+        string $username,
+        string $password,
+        int $skpdId = self::DEFAULT_SKPD_ID,
+        ?int $pegawaiLimit = null,
+        ?callable $locationFilter = null
+    ): array
+    {
+        $this->resetPortalSession();
+        $auth = $this->authenticatePortal($username, $password);
+        $skpdLogin = $this->loginAsSkpd($skpdId);
+        $lokasiPage = $this->getLokasiPage();
+
+        if (! ($lokasiPage['success'] ?? false)) {
+            return [
+                'success' => false,
+                'message' => 'Halaman lokasi absensi tidak bisa diakses.',
+                'login' => [
+                    'status_code' => $auth['response']->getStatusCode(),
+                    'redirect_history' => $this->redirectHistory($auth['response']),
+                    'body_preview' => $this->preview($auth['body']),
+                ],
+                'skpd_login' => $skpdLogin,
+                'page' => $lokasiPage,
+            ];
+        }
+
+        $locations = $this->parseLokasiHtml((string) ($lokasiPage['body'] ?? ''));
+        $employees = [];
+        $fetchedCount = 0;
+
+        foreach ($locations['rows'] as $location) {
+            $locationId = (string) ($location['lokasi_id'] ?? '');
+            if ($locationId === '') {
+                continue;
+            }
+
+            if ($locationFilter !== null && ! $locationFilter($location)) {
+                continue;
+            }
+
+            $pegawaiPage = $this->getLokasiPegawaiPage($locationId);
+            if (! ($pegawaiPage['success'] ?? false)) {
+                continue;
+            }
+
+            $parsedEmployees = $this->parseLokasiPegawaiHtml((string) ($pegawaiPage['body'] ?? ''), $location);
+            foreach ($parsedEmployees['rows'] as $employee) {
+                if ($pegawaiLimit !== null && $fetchedCount >= $pegawaiLimit) {
+                    break 2;
+                }
+
+                $employees[] = $employee;
+                $fetchedCount++;
+            }
+        }
+
+        return [
+            'success' => true,
+            'login' => [
+                'status_code' => $auth['response']->getStatusCode(),
+                'redirect_history' => $this->redirectHistory($auth['response']),
+                'body_preview' => $this->preview($auth['body']),
+            ],
+            'skpd_login' => $skpdLogin,
+            'locations' => $locations,
+            'employees' => [
+                'row_count' => count($employees),
+                'rows' => $employees,
+            ],
+        ];
+    }
+
+    public function getLokasiPage(): array
+    {
+        $response = $this->request('GET', self::ADMIN_LOKASI_PATH);
+        $body = (string) $response->getBody();
+
+        return [
+            'success' => ! $this->isLoginPage($body) && $response->getStatusCode() === 200,
+            'path' => self::ADMIN_LOKASI_PATH,
+            'status_code' => $response->getStatusCode(),
+            'redirect_history' => $this->redirectHistory($response),
+            'body' => $body,
+            'body_preview' => $this->preview($body),
+        ];
+    }
+
+    public function getLokasiPegawaiPage(string $lokasiId): array
+    {
+        $path = self::ADMIN_LOKASI_PATH . '/' . rawurlencode($lokasiId) . '/pegawai';
+        $response = $this->request('GET', $path);
+        $body = (string) $response->getBody();
+
+        return [
+            'success' => ! $this->isLoginPage($body) && $response->getStatusCode() === 200,
+            'path' => $path,
+            'status_code' => $response->getStatusCode(),
+            'redirect_history' => $this->redirectHistory($response),
+            'body' => $body,
+            'body_preview' => $this->preview($body),
+        ];
+    }
+
+    protected function parseLokasiHtml(string $html): array
+    {
+        $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_LOKASI_PATH);
+        $rows = [];
+
+        $crawler->filter('table tbody tr')->each(function (Crawler $row) use (&$rows) {
+            if ($row->filter('td')->count() === 0) {
+                return;
+            }
+
+            $cells = [];
+            $row->filter('td')->each(function (Crawler $cell) use (&$cells) {
+                $cells[] = $this->normalizeText($cell->text(''));
+            });
+
+            $pegawaiUrl = null;
+            $lokasiId = null;
+            $row->filter('a[href]')->each(function (Crawler $link) use (&$pegawaiUrl, &$lokasiId) {
+                $href = trim((string) $link->attr('href'));
+                if ($href === '' || ! str_contains($href, '/pegawai')) {
+                    return;
+                }
+
+                $pegawaiUrl = $this->resolveUrl($href, $this->baseUrl . self::ADMIN_LOKASI_PATH) ?? $href;
+                if (preg_match('/(?:\/admin)?\/lokasi\/([^\/]+)\/pegawai/i', $href, $matches)) {
+                    $lokasiId = $matches[1];
+                }
+            });
+
+            $rows[] = [
+                'nomor' => $cells[0] ?? null,
+                'lokasi_id' => $lokasiId,
+                'nama' => $cells[1] ?? null,
+                'alamat' => $cells[2] ?? null,
+                'lat' => $cells[3] ?? null,
+                'long' => $cells[4] ?? null,
+                'radius' => $cells[5] ?? null,
+                'pegawai_url' => $pegawaiUrl,
+            ];
+        });
+
+        return [
+            'row_count' => count($rows),
+            'rows' => $rows,
+        ];
+    }
+
+    protected function parseLokasiPegawaiHtml(string $html, array $location): array
+    {
+        $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_LOKASI_PATH);
+        $rows = [];
+
+        $crawler->filter('table tbody tr')->each(function (Crawler $row) use (&$rows, $location) {
+            if ($row->filter('td')->count() === 0) {
+                return;
+            }
+
+            $cells = [];
+            $row->filter('td')->each(function (Crawler $cell) use (&$cells) {
+                $cells[] = $this->cellLines($cell);
+            });
+
+            $identity = $cells[1] ?? [];
+            [$nama, $nip] = $this->splitNameAndNip($identity);
+            if ($nip === '' && count($identity) >= 2) {
+                $nip = preg_replace('/\D+/', '', (string) ($identity[1] ?? '')) ?? '';
+            }
+
+            if ($nip === '') {
+                return;
+            }
+
+            $rows[] = [
+                'nomor' => $this->normalizeText($cells[0][0] ?? ''),
+                'nip' => $nip,
+                'nama' => $nama,
+                'lokasi_id' => (string) ($location['lokasi_id'] ?? ''),
+                'lokasi_nama' => (string) ($location['nama'] ?? ''),
+                'lokasi_alamat' => (string) ($location['alamat'] ?? ''),
+                'lokasi_lat' => (string) ($location['lat'] ?? ''),
+                'lokasi_long' => (string) ($location['long'] ?? ''),
+            ];
+        });
+
+        return [
+            'row_count' => count($rows),
+            'rows' => $rows,
         ];
     }
 
