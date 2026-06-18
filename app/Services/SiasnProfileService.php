@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\SiasnPnsProfile;
 use Carbon\Carbon;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -24,6 +25,7 @@ class SiasnProfileService
         if ($token === '') {
             throw new RuntimeException('Token SIASN belum diisi.');
         }
+        $this->ensureBearerTokenLooksValid($token);
 
         [$summaryResponse, $summary, $jenisAsn] = $this->findSummary($nip, $token);
 
@@ -50,6 +52,74 @@ class SiasnProfileService
         ];
     }
 
+    public function testAccess(string $bearerToken, ?string $nip = null): array
+    {
+        $token = $this->normalizeToken($bearerToken);
+        $nip = preg_replace('/\D+/', '', (string) $nip) ?? '';
+
+        if ($token === '') {
+            throw new RuntimeException('Token SIASN belum diisi.');
+        }
+        $this->ensureBearerTokenLooksValid($token);
+
+        if ($nip === '') {
+            $payload = $this->jwtPayload($token);
+            $expiresAt = is_array($payload) && isset($payload['exp'])
+                ? Carbon::createFromTimestamp((int) $payload['exp'])
+                : null;
+
+            if ($expiresAt !== null && $expiresAt->isPast()) {
+                throw new RuntimeException('Token SIASN sudah kedaluwarsa pada ' . $expiresAt->format('Y-m-d H:i:s') . '. Silakan login ulang lalu ambil token baru.');
+            }
+
+            $pegawai = is_array($payload['pegawai'] ?? null) ? $payload['pegawai'] : [];
+            $nama = $this->stringValue($pegawai['nama'] ?? null);
+            $nipToken = $this->stringValue($pegawai['nip'] ?? $pegawai['username'] ?? null);
+            $identity = $nama ?: ($nipToken ? 'NIP ' . $nipToken : 'pengguna SIASN');
+            $expiryText = $expiresAt ? ' Berlaku sampai ' . $expiresAt->format('Y-m-d H:i:s') . '.' : '';
+
+            return [
+                'success' => true,
+                'message' => 'Token SIASN terbaca untuk ' . $identity . '.' . $expiryText . ' Isi NIP Test bila ingin lanjut cek akses profil PNS/PPPK ke API SIASN.',
+            ];
+        }
+
+        if (strlen($nip) !== 18) {
+            throw new RuntimeException('NIP harus berisi 18 digit.');
+        }
+
+        try {
+            [$summaryResponse, $summary, $jenisAsn] = $this->findSummary($nip, $token);
+        } catch (RuntimeException $exception) {
+            if (str_contains($exception->getMessage(), 'Data PNS/PPPK tidak ditemukan')) {
+                return [
+                    'success' => true,
+                    'message' => 'Login SIASN berhasil, tetapi data PNS/PPPK tidak ditemukan untuk NIP tersebut.',
+                ];
+            }
+
+            throw $exception;
+        }
+
+        $pnsId = $this->value($summary, 'id');
+        $orang = [];
+        if ($pnsId !== null) {
+            $orangResponse = $this->get('/profilasn/api/orang', [
+                'id' => $pnsId,
+            ], $token);
+            $orang = $this->payloadArray($orangResponse);
+        }
+
+        $merged = $this->mergeSiasnData($orang, $summary);
+        $nama = $this->stringValue($this->value($merged, 'nama')) ?: 'ASN';
+
+        return [
+            'success' => true,
+            'message' => "Login SIASN berhasil. Profil {$jenisAsn} untuk {$nama} bisa diakses.",
+            'profile' => $this->displayProfilePayload($merged, $jenisAsn),
+        ];
+    }
+
     private function findSummary(string $nip, string $token): array
     {
         $attempts = [
@@ -70,13 +140,17 @@ class SiasnProfileService
 
     private function get(string $path, array $query, string $token): array
     {
-        $response = Http::withToken($token)
-            ->acceptJson()
-            ->withHeaders([
-                'Content-Type' => 'application/x-www-form-urlencoded',
-            ])
-            ->timeout(30)
-            ->get(self::BASE_URL . $path, $query);
+        try {
+            $response = Http::withToken($token)
+                ->acceptJson()
+                ->withHeaders([
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                ])
+                ->timeout(30)
+                ->get(self::BASE_URL . $path, $query);
+        } catch (ConnectionException $exception) {
+            throw new RuntimeException('API SIASN tidak bisa dihubungi dari server lokal: ' . $exception->getMessage(), 0, $exception);
+        }
 
         if ($response->unauthorized() || $response->forbidden()) {
             throw new RuntimeException('Token SIASN ditolak atau sudah kedaluwarsa. Silakan login ulang lalu ambil token baru.');
@@ -155,6 +229,23 @@ class SiasnProfileService
         ];
     }
 
+    private function displayProfilePayload(array $merged, string $jenisAsn): array
+    {
+        return [
+            'Jenis ASN' => $jenisAsn,
+            'NIP' => $this->stringValue($this->value($merged, 'nip_baru') ?? $this->value($merged, 'nip')),
+            'Nama' => $this->stringValue($this->value($merged, 'nama')),
+            'Jabatan' => $this->jabatan($merged),
+            'Jenis Jabatan' => $this->stringValue($this->nestedName($this->value($merged, 'jenis_jabatan_nama'))),
+            'Unit Organisasi' => $this->stringValue($this->value($merged, 'unor_nama')),
+            'Unit Induk' => $this->stringValue($this->value($merged, 'unor_induk_nama')),
+            'Instansi Kerja' => $this->stringValue($this->value($merged, 'instansi_kerja_nama')),
+            'Satuan Kerja' => $this->stringValue($this->value($merged, 'satuan_kerja_kerja_nama')),
+            'Lokasi Kerja' => $this->stringValue($this->value($merged, 'lokasi_kerja_nama')),
+            'TMT Jabatan' => $this->dateValue($this->value($merged, 'tmt_jabatan')),
+        ];
+    }
+
     private function jabatan(array $data): ?string
     {
         $jenisId = (string) ($this->value($data, 'jenis_jabatan_id') ?? '');
@@ -223,10 +314,76 @@ class SiasnProfileService
     private function normalizeToken(string $token): string
     {
         $token = trim($token);
+
+        if (preg_match('/authorization\s*:\s*bearer\s+([A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+)/i', $token, $matches) === 1) {
+            return $matches[1];
+        }
+
+        if (preg_match('/["\']token["\']\s*:\s*["\']([^"\']+)["\']/i', $token, $matches) === 1) {
+            return trim($matches[1]);
+        }
+
+        if (preg_match('/(?:^|[;\s])token\s*=\s*"?([^";\s]+)"?/i', $token, $matches) === 1) {
+            return trim($matches[1]);
+        }
+
+        if (preg_match('/(?:^|\R)\s*token\s+"([^"]+)"/i', $token, $matches) === 1) {
+            return trim($matches[1]);
+        }
+
         if (str_starts_with(strtolower($token), 'bearer ')) {
             return trim(substr($token, 7));
         }
 
         return $token;
+    }
+
+    private function ensureBearerTokenLooksValid(string $token): void
+    {
+        $lowerToken = strtolower($token);
+
+        if (str_starts_with($lowerToken, 'http://') || str_starts_with($lowerToken, 'https://') || str_contains($lowerToken, 'openid-connect/auth')) {
+            throw new RuntimeException('Yang ditempel adalah URL login SSO SIASN, bukan token. Selesaikan login di browser, lalu salin access_token atau header Authorization: Bearer dari request ASN Digital/SIASN.');
+        }
+
+        if (str_contains($lowerToken, 'code_challenge=') || str_contains($lowerToken, 'response_type=code') || str_contains($lowerToken, 'client_id=bkn-portal')) {
+            throw new RuntimeException('Yang ditempel terlihat seperti parameter login OpenID Connect, bukan token SIASN. Token yang dibutuhkan adalah access_token setelah login berhasil.');
+        }
+
+        if (preg_match('/^\d{4,8}$/', $token) === 1) {
+            throw new RuntimeException('Yang ditempel terlihat seperti kode OTP/authenticator, bukan token SIASN. Token SIASN biasanya panjang dan diawali eyJ... atau Bearer eyJ...');
+        }
+
+        $payload = $this->jwtPayload($token);
+        if (is_array($payload) && strtolower((string) ($payload['typ'] ?? '')) === 'refresh') {
+            throw new RuntimeException('Yang ditempel adalah refresh token. Gunakan access token atau cookie token, bukan refresh_token/sso_refresh_token.');
+        }
+
+        if (strlen($token) < 40) {
+            throw new RuntimeException('Token SIASN terlalu pendek. Salin nilai Authorization/Bearer token dari request SIASN, bukan kode OTP.');
+        }
+
+        if (! str_starts_with($token, 'eyJ') && substr_count($token, '.') < 2) {
+            throw new RuntimeException('Token SIASN belum terlihat seperti access_token JWT. Biasanya token panjang, diawali eyJ..., dan memiliki tiga bagian yang dipisahkan titik.');
+        }
+    }
+
+    private function jwtPayload(string $token): ?array
+    {
+        $parts = explode('.', $token);
+        if (count($parts) < 2) {
+            return null;
+        }
+
+        $payload = strtr($parts[1], '-_', '+/');
+        $payload .= str_repeat('=', (4 - strlen($payload) % 4) % 4);
+        $decoded = base64_decode($payload, true);
+        if ($decoded === false) {
+            return null;
+        }
+
+        $json = json_decode($decoded, true);
+
+        return is_array($json) ? $json : null;
     }
 }

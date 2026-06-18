@@ -22,6 +22,8 @@ Route::prefix('cms')->name('cms.')->group(function () {
     Route::post('/peta-jabatan-real/fetch', [AbsensiCmsController::class, 'fetchPetaJabatanReal'])->name('peta-jabatan-real.fetch');
     Route::get('/siasn', [SiasnProfileController::class, 'index'])->name('siasn.index');
     Route::post('/siasn/fetch', [SiasnProfileController::class, 'fetch'])->name('siasn.fetch');
+    Route::get('/siasn/test-login', fn () => redirect()->route('cms.siasn.index'));
+    Route::post('/siasn/test-login', [SiasnProfileController::class, 'testLogin'])->name('siasn.test-login');
     Route::post('/siasn/sync-education-locations', [SiasnProfileController::class, 'syncEducationLocations'])->name('siasn.sync-education-locations');
     Route::get('/laporan-absensi-harian', [AbsensiCmsController::class, 'laporanAbsensiHarian'])->name('laporan-absensi-harian.index');
     Route::post('/laporan-absensi-harian/fetch', [AbsensiCmsController::class, 'fetchLaporanAbsensiHarian'])->name('laporan-absensi-harian.fetch');

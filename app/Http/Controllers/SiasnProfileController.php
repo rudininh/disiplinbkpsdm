@@ -2,11 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\SiasnPnsProfile;
-use App\Models\SiasnAbsensiLocationEmployee;
 use App\Services\SiasnEducationLocationSyncService;
 use App\Services\SiasnProfileService;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 
@@ -21,15 +20,7 @@ class SiasnProfileController extends Controller
 
     public function index(Request $request): View
     {
-        return view('absensi-cms.siasn', [
-            'profiles' => $this->profiles($request),
-            'totalRows' => SiasnPnsProfile::query()->count(),
-            'lastFetchedAt' => SiasnPnsProfile::query()->max('fetched_at'),
-            'educationRows' => $this->educationRows(),
-            'educationSummary' => $this->educationSummary(),
-            'result' => null,
-            'search' => (string) $request->input('q', ''),
-        ]);
+        return $this->siasnView($request);
     }
 
     public function fetch(Request $request): View
@@ -48,15 +39,32 @@ class SiasnProfileController extends Controller
             ];
         }
 
-        return view('absensi-cms.siasn', [
-            'profiles' => $this->profiles($request),
-            'totalRows' => SiasnPnsProfile::query()->count(),
-            'lastFetchedAt' => SiasnPnsProfile::query()->max('fetched_at'),
-            'educationRows' => $this->educationRows(),
-            'educationSummary' => $this->educationSummary(),
-            'result' => $result,
-            'search' => (string) $request->input('q', ''),
+        return $this->siasnView($request, $result);
+    }
+
+    public function testLogin(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'nip' => ['nullable', 'digits:18'],
+            'bearer_token' => ['required', 'string'],
         ]);
+
+        try {
+            $result = $this->service->testAccess(
+                $data['bearer_token'],
+                $data['nip'] ?? null
+            );
+        } catch (\Throwable $exception) {
+            $result = [
+                'success' => false,
+                'message' => 'Tes login SIASN gagal: ' . $exception->getMessage(),
+            ];
+        }
+
+        return redirect()
+            ->route('cms.siasn.index')
+            ->with('siasn_result', $result)
+            ->withInput($request->only('nip'));
     }
 
     public function syncEducationLocations(Request $request): View
@@ -90,53 +98,14 @@ class SiasnProfileController extends Controller
             }
         }
 
+        return $this->siasnView($request, $result);
+    }
+
+    private function siasnView(Request $request, ?array $result = null): View
+    {
         return view('absensi-cms.siasn', [
-            'profiles' => $this->profiles($request),
-            'totalRows' => SiasnPnsProfile::query()->count(),
-            'lastFetchedAt' => SiasnPnsProfile::query()->max('fetched_at'),
-            'educationRows' => $this->educationRows(),
-            'educationSummary' => $this->educationSummary(),
-            'result' => $result,
-            'search' => (string) $request->input('q', ''),
+            'result' => $result ?? $request->session()->get('siasn_result'),
         ]);
-    }
-
-    private function profiles(Request $request)
-    {
-        $query = SiasnPnsProfile::query()->latest('fetched_at')->latest('id');
-        $search = trim((string) $request->input('q', ''));
-
-        if ($search !== '') {
-            $query->where(function ($query) use ($search): void {
-                $query
-                    ->where('nip', 'like', '%' . $search . '%')
-                    ->orWhere('nama', 'like', '%' . $search . '%')
-                    ->orWhere('jabatan', 'like', '%' . $search . '%')
-                    ->orWhere('unit_organisasi', 'like', '%' . $search . '%')
-                    ->orWhere('unit_organisasi_induk', 'like', '%' . $search . '%');
-            });
-        }
-
-        return $query->paginate(50)->withQueryString();
-    }
-
-    private function educationRows()
-    {
-        return SiasnAbsensiLocationEmployee::query()
-            ->latest('fetched_at')
-            ->latest('id')
-            ->limit(100)
-            ->get();
-    }
-
-    private function educationSummary(): array
-    {
-        return [
-            'total' => SiasnAbsensiLocationEmployee::query()->count(),
-            'unit_cocok' => SiasnAbsensiLocationEmployee::query()->where('match_status', 'unit_cocok')->count(),
-            'lokasi_bukan_unit' => SiasnAbsensiLocationEmployee::query()->where('match_status', 'lokasi_bukan_unit')->count(),
-            'siasn_gagal' => SiasnAbsensiLocationEmployee::query()->where('match_status', 'siasn_gagal')->count(),
-        ];
     }
 
     private function absensiCredentials(): ?array
