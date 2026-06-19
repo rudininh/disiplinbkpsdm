@@ -320,7 +320,7 @@
                                             @endif
                                         </td>
                                         <td class="px-4 py-3 font-medium text-zinc-900">{{ $unit['unit_kerja'] ?? '-' }}</td>
-                                        <td class="px-4 py-3 text-zinc-600">{{ $unit['siasn_unit_organisasi'] ?: '-' }}</td>
+                                        <td class="px-4 py-3 text-zinc-600">{{ ($unit['siasn_unit_organisasi'] ?? '') ?: '-' }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-zinc-600">{{ $unit['kecamatan'] ?? '-' }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-zinc-600">{{ $unit['kelurahan'] ?? '-' }}</td>
                                         <td class="px-4 py-3 text-zinc-600">{{ $unit['alamat'] ?? '-' }}</td>
@@ -383,8 +383,8 @@
                                                                                 <span class="text-zinc-400">#{{ $employee['lokasi_id'] }}</span>
                                                                             @endif
                                                                         </td>
-                                                                        <td class="px-3 py-2 text-zinc-600">{{ $employee['siasn_unit_organisasi'] ?: '-' }}</td>
-                                                                        <td class="px-3 py-2 text-zinc-600">{{ $employee['siasn_jabatan'] ?: '-' }}</td>
+                                                                        <td class="px-3 py-2 text-zinc-600">{{ ($employee['siasn_unit_organisasi'] ?? '') ?: '-' }}</td>
+                                                                        <td class="px-3 py-2 text-zinc-600">{{ ($employee['siasn_jabatan'] ?? '') ?: '-' }}</td>
                                                                         <td class="whitespace-nowrap px-3 py-2">
                                                                             @php($statusAsn = $employee['status_asn'] ?? '')
                                                                             @if ($statusAsn !== '')

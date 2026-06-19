@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\SiasnAbsensiLocationEmployee;
+use Illuminate\Support\Facades\Schema;
 use ZipArchive;
 
 class PetaJabatanExcelService
@@ -24,12 +26,21 @@ class PetaJabatanExcelService
 
         $workbook = $this->readWorkbook($path);
         $real = $this->flattenTppPayload($tppPayload);
+        $siasnFunctionalPools = $this->siasnFunctionalPools();
         $sheets = [];
         $summary = $this->emptySummary();
 
         foreach ($workbook['sheets'] as $index => $sheet) {
             $matchedSkpd = $this->matchSkpd($sheet, $real['skpd']);
-            $pool = $matchedSkpd ? ($real['by_skpd'][$matchedSkpd['skpd_id']] ?? []) : $real['global'];
+            $pool = $matchedSkpd ? [
+                'jobs' => $real['by_skpd'][$matchedSkpd['skpd_id']] ?? [],
+                'categories' => $real['by_skpd_category'][$matchedSkpd['skpd_id']] ?? [],
+                'siasn_jobs' => $siasnFunctionalPools[$matchedSkpd['skpd_id']]['jobs'] ?? [],
+            ] : [
+                'jobs' => $real['global'],
+                'categories' => [],
+                'siasn_jobs' => [],
+            ];
             $records = $this->buildComparisonRows($sheet['records'], $pool);
             $sheetSummary = [
                 'records' => count($records),
@@ -110,31 +121,203 @@ class PetaJabatanExcelService
 
     private function buildComparisonRows(array $records, array $realPool): array
     {
-        $cursors = [];
+        $jobPool = $realPool['jobs'] ?? $realPool;
+        $categoryPool = $realPool['categories'] ?? [];
+        $siasnJobPool = $realPool['siasn_jobs'] ?? [];
+        $assignedPeople = [];
 
-        return array_map(function (array $record) use ($realPool, &$cursors): array {
-            $key = $this->jobKey($record['jabatan']);
-            $people = $realPool[$key] ?? [];
-            $cursor = $cursors[$key] ?? 0;
+        return array_map(function (array $record) use ($jobPool, $categoryPool, $siasnJobPool, &$assignedPeople): array {
+            $keys = $this->jobKeys($record['jabatan']);
+            $categoryKey = $this->jobKey($record['category_match'] ?? $record['category'] ?? '');
+            $categoryMatch = $this->matchingCategoryJobs($categoryPool, $categoryKey);
+            $categoryJobs = $categoryMatch['jobs'];
+            $categoryExists = $categoryMatch['matched'];
+            $categoryMatchingKeys = array_values(array_filter($keys, fn (string $key): bool => isset($categoryJobs[$key])));
+            $matchingKeys = $categoryMatchingKeys !== []
+                ? $categoryMatchingKeys
+                : ($categoryExists ? [] : array_values(array_filter($keys, fn (string $key): bool => isset($jobPool[$key]))));
+            $pool = $categoryMatchingKeys !== [] ? $categoryJobs : $jobPool;
+            $people = [];
+
+            foreach ($matchingKeys as $key) {
+                $people = $this->mergePeople($people, $pool[$key] ?? []);
+            }
+
+            $people = $this->mergePeople($people, $this->siasnPeopleForRecord($record, $keys, $siasnJobPool));
+            $people = array_values(array_filter($people, fn (mixed $person): bool => ! isset($assignedPeople[$this->personKey($person)])));
             $needed = max((int) ($record['kebutuhan'] ?? 0), (int) ($record['bezetting'] ?? 0), 1);
-            $assigned = array_slice($people, $cursor, $needed);
-            $cursors[$key] = $cursor + count($assigned);
+            $assigned = array_slice($people, 0, max($needed, count($people)));
+
+            foreach ($assigned as $person) {
+                $assignedPeople[$this->personKey($person)] = true;
+            }
             $filled = count(array_filter($assigned));
             $vacant = max($needed - $filled, 0);
+            $assignedNames = array_map(fn (mixed $person): string => $this->personName($person), array_values($assigned));
+            $assignedDetails = array_map(fn (mixed $person): array => $this->personDetail($person), array_values($assigned));
+            $assignedSlotNames = array_map(fn (mixed $person): string => $this->personDisplayName($person), array_values($assigned));
 
             return [
                 ...$record,
+                'bezetting_excel' => $record['bezetting'] ?? null,
+                'kebutuhan_excel' => $record['kebutuhan'] ?? null,
+                'selisih_excel' => $record['selisih'] ?? null,
+                'bezetting' => $filled,
+                'kebutuhan' => $needed,
+                'selisih' => $filled - $needed,
                 'needed' => $needed,
                 'filled' => $filled,
                 'vacant' => $vacant,
-                'real_extra' => max(count($people) - $cursors[$key], 0),
-                'people' => array_values($assigned),
+                'real_extra' => max(count($people) - count($assigned), 0),
+                'people' => array_values($assignedNames),
+                'people_details' => array_values($assignedDetails),
                 'slots' => [
-                    ...array_map(fn (string $name): array => ['status' => 'Terisi', 'nama' => $name], array_values($assigned)),
+                    ...array_map(fn (string $name): array => ['status' => 'Terisi', 'nama' => $name], array_values($assignedSlotNames)),
                     ...array_fill(0, $vacant, ['status' => 'Kosong', 'nama' => null]),
                 ],
             ];
         }, $records);
+    }
+
+    private function siasnPeopleForRecord(array $record, array $keys, array $siasnJobPool): array
+    {
+        if (! str_contains(strtoupper((string) ($record['category'] ?? '')), 'JABATAN FUNGSIONAL')) {
+            return [];
+        }
+
+        $people = [];
+        $unitKind = $this->educationUnitKindForFunctionalRecord($record['jabatan'] ?? '');
+
+        foreach ($keys as $key) {
+            foreach (($siasnJobPool[$key] ?? []) as $person) {
+                if ($unitKind !== null && ($person['unit_kind'] ?? null) !== $unitKind) {
+                    continue;
+                }
+
+                $people[] = [
+                    ...$person,
+                    'record_jabatan' => $record['jabatan'] ?? ($person['jabatan'] ?? null),
+                    'record_kelas' => $record['kelas'] ?? null,
+                ];
+            }
+        }
+
+        return $this->mergePeople([], $people);
+    }
+
+    private function mergePeople(array ...$groups): array
+    {
+        $merged = [];
+        $seen = [];
+
+        foreach ($groups as $group) {
+            foreach ($group as $person) {
+                $key = $this->personKey($person);
+
+                if ($key === '' || isset($seen[$key])) {
+                    continue;
+                }
+
+                $seen[$key] = true;
+                $merged[] = $person;
+            }
+        }
+
+        return $merged;
+    }
+
+    private function personKey(mixed $person): string
+    {
+        if (is_array($person)) {
+            $nip = preg_replace('/\D+/', '', (string) ($person['nip'] ?? '')) ?? '';
+
+            if ($nip !== '') {
+                return 'nip:' . $nip;
+            }
+
+            return implode('|', [
+                (string) ($person['source'] ?? 'person'),
+                $this->jobKey($person['name'] ?? ''),
+                $this->jobKey($person['unit_kerja'] ?? ''),
+                $this->jobKey($person['jabatan'] ?? ''),
+            ]);
+        }
+
+        return 'name:' . $this->jobKey((string) $person);
+    }
+
+    private function personName(mixed $person): string
+    {
+        if (is_array($person)) {
+            return trim((string) ($person['name'] ?? $person['nama'] ?? $person['display'] ?? ''));
+        }
+
+        return trim((string) $person);
+    }
+
+    private function personDisplayName(mixed $person): string
+    {
+        $name = $this->personName($person);
+
+        if (! is_array($person)) {
+            return $name;
+        }
+
+        $parts = array_values(array_filter([
+            $name,
+            preg_replace('/\D+/', '', (string) ($person['nip'] ?? '')) ?: null,
+            $this->asnStatus($person['status_asn'] ?? null),
+        ]));
+
+        return implode(' | ', $parts);
+    }
+
+    private function personDetail(mixed $person): array
+    {
+        if (is_array($person)) {
+            $name = $this->personName($person);
+
+            return [
+                ...$person,
+                'name' => $name,
+                'display' => $this->personDisplayName($person),
+            ];
+        }
+
+        $name = $this->personName($person);
+
+        return [
+            'source' => 'tpp',
+            'name' => $name,
+            'display' => $name,
+        ];
+    }
+
+    private function matchingCategoryJobs(array $categoryPool, string $categoryKey): array
+    {
+        $jobs = [];
+        $matched = false;
+
+        if ($categoryKey === '') {
+            return ['matched' => false, 'jobs' => []];
+        }
+
+        foreach ($categoryPool as $candidateKey => $candidateJobs) {
+            if (! $this->jobKeyMatches($categoryKey, (string) $candidateKey)) {
+                continue;
+            }
+
+            $matched = true;
+
+            foreach ($candidateJobs as $jobKey => $people) {
+                $jobs[$jobKey] = array_values(array_unique([
+                    ...($jobs[$jobKey] ?? []),
+                    ...$people,
+                ]));
+            }
+        }
+
+        return ['matched' => $matched, 'jobs' => $jobs];
     }
 
     private function extractRecords(array $rows): array
@@ -177,7 +360,10 @@ class PetaJabatanExcelService
                     'bezetting' => $bezetting,
                     'kebutuhan' => $kebutuhan,
                     'selisih' => $this->numericValue($rows[$row][$header['selisih_col']] ?? null),
-                    'category' => $category,
+                    'category' => $category['name'],
+                    'category_match' => $this->categoryMatchForRecord($jabatan, $category['name']),
+                    'category_kelas' => $category['kelas'],
+                    'category_is_position' => $category['is_position'],
                 ];
             }
         }
@@ -218,12 +404,14 @@ class PetaJabatanExcelService
         return $headers;
     }
 
-    private function categoryForHeader(array $rows, array $header): ?string
+    private function categoryForHeader(array $rows, array $header): array
     {
         $startRow = max((int) $header['row'] - 12, 1);
         $startColumn = max((int) $header['jabatan_col'] - 2, 1);
         $endColumn = (int) ($header['selisih_col'] ?? $header['kebutuhan_col']) + 2;
         $fallback = null;
+        $fallbackRow = null;
+        $fallbackColumn = null;
 
         for ($row = (int) $header['row'] - 1; $row >= $startRow; $row--) {
             for ($column = $startColumn; $column <= $endColumn; $column++) {
@@ -234,18 +422,126 @@ class PetaJabatanExcelService
                 }
 
                 if (str_contains(strtoupper($text), 'JABATAN FUNGSIONAL')) {
-                    return 'Jabatan Fungsional';
+                    return [
+                        'name' => 'Jabatan Fungsional',
+                        'kelas' => null,
+                        'is_position' => false,
+                    ];
+                }
+
+                if ($this->classValue($text) !== null) {
+                    continue;
                 }
 
                 if ($this->isIgnoredCategoryLabel($text)) {
                     continue;
                 }
 
-                $fallback ??= $text;
+                if ($fallback === null) {
+                    $fallback = $text;
+                    $fallbackRow = $row;
+                    $fallbackColumn = $column;
+                }
             }
         }
 
-        return $fallback;
+        $kelas = $fallbackRow !== null
+            ? $this->nearbyClassForCategory($rows, $fallbackRow, $fallbackColumn ?? $startColumn, $startColumn, $endColumn)
+            : null;
+
+        return [
+            'name' => $fallback,
+            'kelas' => $kelas,
+            'is_position' => $fallback !== null && ($kelas !== null || $this->looksLikePositionLabel($fallback)),
+        ];
+    }
+
+    private function nearbyClassForCategory(array $rows, int $categoryRow, int $categoryColumn, int $startColumn, int $endColumn): ?int
+    {
+        foreach ([0, 1, -1, 2, -2, 3, -3] as $offset) {
+            $row = $categoryRow + $offset;
+
+            if (! isset($rows[$row])) {
+                continue;
+            }
+
+            $columns = array_values(array_unique([
+                $categoryColumn,
+                ...range($startColumn, $endColumn),
+            ]));
+
+            foreach ($columns as $column) {
+                $kelas = $this->classValue($rows[$row][$column] ?? null);
+
+                if ($kelas !== null) {
+                    return $kelas;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function classValue(mixed $value): ?int
+    {
+        $text = $this->normalizeText((string) $value);
+
+        if (preg_match('/\bKELAS\s*\(?\s*(\d+)/i', $text, $match)) {
+            return (int) $match[1];
+        }
+
+        return null;
+    }
+
+    private function looksLikePositionLabel(string $value): bool
+    {
+        $upper = strtoupper($this->normalizeText($value));
+
+        return preg_match('/^(KEPALA|SEKRETARIS|CAMAT|LURAH|DIREKTUR)\b/u', $upper) === 1
+            || str_contains($upper, ' BIDANG ')
+            || str_contains($upper, ' BAGIAN ')
+            || str_contains($upper, ' SUB BAGIAN ');
+    }
+
+    private function categoryMatchForRecord(string $jabatan, ?string $category): ?string
+    {
+        $category = $this->normalizeText($category);
+
+        if (strcasecmp($category, 'Jabatan Fungsional') !== 0) {
+            return $category !== '' ? $category : null;
+        }
+
+        preg_match_all('/\(([^)]*)\)/u', $jabatan, $matches);
+
+        foreach ($matches[1] ?? [] as $hint) {
+            $hint = $this->normalizeText($hint);
+
+            if ($hint === '' || ! $this->looksLikeUnitHint($hint)) {
+                continue;
+            }
+
+            return $this->positionLabelFromUnitHint($hint);
+        }
+
+        return $category;
+    }
+
+    private function looksLikeUnitHint(string $value): bool
+    {
+        $upper = strtoupper($this->normalizeText($value));
+
+        return preg_match('/^(BAGIAN|BIDANG|SUB\s*BAGIAN|SUBBAGIAN|SEKSI|SEKRETARIAT|UPT|UPTD|UNIT)\b/u', $upper) === 1;
+    }
+
+    private function positionLabelFromUnitHint(string $value): string
+    {
+        $value = preg_replace('/^SUBBAGIAN\b/iu', 'Sub Bagian', $value) ?: $value;
+
+        if ($this->looksLikePositionLabel($value)) {
+            return $value;
+        }
+
+        return 'Kepala ' . $value;
     }
 
     private function isIgnoredCategoryLabel(string $value): bool
@@ -256,12 +552,14 @@ class PetaJabatanExcelService
             || in_array($key, ['org', 'kelas', 'kls', 'b', 'k', '+/-', '-/+', 'kekuatan pegawai'], true)
             || str_starts_with($key, 'peta jabatan')
             || str_starts_with($key, 'jumlah pegawai')
+            || preg_match('/\bkelas\s*\(?\s*\d+/i', $value)
+            || ! preg_match('/[a-z]/i', $value)
             || preg_match('/^-?\d+$/', $value);
     }
 
     private function findHeaderColumn(array $cells, int $startColumn, array $labels): ?int
     {
-        for ($column = $startColumn; $column <= $startColumn + 12; $column++) {
+        for ($column = $startColumn; $column <= $startColumn + 24; $column++) {
             $value = $this->headerKey($cells[$column] ?? '');
 
             if (in_array($value, $labels, true)) {
@@ -316,6 +614,7 @@ class PetaJabatanExcelService
     {
         $global = [];
         $bySkpd = [];
+        $bySkpdCategory = [];
         $skpdRows = [];
 
         foreach (($payload['skpd'] ?? []) as $skpd) {
@@ -328,33 +627,188 @@ class PetaJabatanExcelService
 
             foreach ($this->flattenTree($skpd['tree'] ?? []) as $row) {
                 $key = $this->jobKey($row['jabatan'] ?? '');
+                $pegawai = trim((string) ($row['pegawai'] ?? ''));
 
-                if ($key === '' || empty($row['pegawai'])) {
+                if ($key === '' || $this->isVacantPegawai($pegawai, $row['jabatan'] ?? '')) {
                     continue;
                 }
 
-                $bySkpd[$skpdId][$key][] = (string) $row['pegawai'];
-                $global[$key][] = (string) $row['pegawai'];
+                $categoryKey = $this->jobKey($row['_parent_jabatan'] ?? '');
+                $bySkpd[$skpdId][$key][] = $pegawai;
+                if ($categoryKey !== '') {
+                    $bySkpdCategory[$skpdId][$categoryKey][$key][] = $pegawai;
+                }
+                $global[$key][] = $pegawai;
             }
         }
 
         return [
             'global' => $global,
             'by_skpd' => $bySkpd,
+            'by_skpd_category' => $bySkpdCategory,
             'skpd' => $skpdRows,
         ];
     }
 
-    private function flattenTree(array $nodes): array
+    private function flattenTree(array $nodes, ?string $parentJabatan = null): array
     {
         $rows = [];
 
         foreach ($nodes as $node) {
+            $node['_parent_jabatan'] = $parentJabatan;
             $rows[] = $node;
-            $rows = array_merge($rows, $this->flattenTree($node['children'] ?? []));
+            $rows = array_merge($rows, $this->flattenTree($node['children'] ?? [], $node['jabatan'] ?? null));
         }
 
         return $rows;
+    }
+
+    private function siasnFunctionalPools(): array
+    {
+        if (! Schema::hasTable('siasn_absensi_location_employees')) {
+            return [];
+        }
+
+        $pools = [];
+        $employees = SiasnAbsensiLocationEmployee::query()
+            ->whereIn('match_status', ['lokasi_absensi_cocok', 'unit_cocok'])
+            ->whereNotNull('siasn_pns_profile_id')
+            ->whereNotNull('siasn_jabatan')
+            ->with('siasnProfile')
+            ->orderBy('skpd_id')
+            ->orderBy('lokasi_nama')
+            ->orderBy('nama')
+            ->get();
+
+        foreach ($employees as $employee) {
+            if (! $this->isActiveSiasnEmployee($employee)) {
+                continue;
+            }
+
+            $skpdId = (int) ($employee->skpd_id ?? 0);
+            $jabatan = $this->normalizeText((string) ($employee->siasn_jabatan ?? ''));
+            $nama = $this->normalizeText((string) ($employee->nama ?? ''));
+            $unitKerja = $this->normalizeText((string) (($employee->siasn_unit_organisasi ?? '') ?: ($employee->lokasi_nama ?? '')));
+            $key = $this->jobKey($jabatan);
+
+            if ($skpdId <= 0 || $key === '' || $nama === '' || $unitKerja === '') {
+                continue;
+            }
+
+            $person = [
+                'source' => 'siasn',
+                'name' => $nama,
+                'nip' => preg_replace('/\D+/', '', (string) ($employee->nip ?? '')) ?: null,
+                'jabatan' => $jabatan,
+                'unit_kerja' => $unitKerja,
+                'lokasi_nama' => $this->normalizeText((string) ($employee->lokasi_nama ?? '')),
+                'unit_kind' => $this->educationUnitKind($unitKerja),
+                'status_asn' => $this->asnStatus($employee->siasnProfile?->jenis_asn ?? data_get($employee->row_data, 'siasn_status')),
+            ];
+
+            $pools[$skpdId]['jobs'][$key][] = $person;
+        }
+
+        foreach ($pools as $skpdId => $pool) {
+            foreach (($pool['jobs'] ?? []) as $key => $people) {
+                $pools[$skpdId]['jobs'][$key] = $this->mergePeople([], $people);
+            }
+        }
+
+        return $pools;
+    }
+
+    private function isActiveSiasnEmployee(SiasnAbsensiLocationEmployee $employee): bool
+    {
+        $raw = $employee->siasnProfile?->raw_data ?: [];
+        $status = $this->rawText(
+            data_get($raw, 'merged.kedudukan_hukum_nama')
+                ?? data_get($raw, 'summary.kedudukan_hukum_nama')
+                ?? data_get($employee->row_data, 'siasn_status')
+        );
+
+        if ($status === '') {
+            return true;
+        }
+
+        $upper = strtoupper($status);
+
+        return str_contains($upper, 'AKTIF')
+            && ! str_contains($upper, 'TIDAK AKTIF')
+            && ! str_contains($upper, 'PENSIUN')
+            && ! str_contains($upper, 'BERHENTI')
+            && ! str_contains($upper, 'MENINGGAL');
+    }
+
+    private function rawText(mixed $value): string
+    {
+        if (is_array($value)) {
+            return $this->normalizeText((string) ($value['nama'] ?? reset($value) ?: ''));
+        }
+
+        if (is_string($value) && str_starts_with(trim($value), '{')) {
+            $decoded = json_decode($value, true);
+
+            if (is_array($decoded)) {
+                return $this->rawText($decoded);
+            }
+        }
+
+        return $this->normalizeText((string) $value);
+    }
+
+    private function educationUnitKindForFunctionalRecord(?string $jabatan): ?string
+    {
+        $upper = strtoupper($this->normalizeText($jabatan));
+
+        if (! str_contains($upper, 'GURU')) {
+            return null;
+        }
+
+        if (str_contains($upper, 'TAMAN KANAK') || preg_match('/\bTK\b/u', $upper)) {
+            return 'TK';
+        }
+
+        if (str_contains($upper, 'SEKOLAH DASAR') || preg_match('/\bSD\b/u', $upper) || preg_match('/\bMI\b/u', $upper)) {
+            return 'SD';
+        }
+
+        if (str_contains($upper, 'SEKOLAH MENENGAH PERTAMA') || preg_match('/\bSMP\b/u', $upper) || preg_match('/\bMTS\b/u', $upper)) {
+            return 'SMP';
+        }
+
+        return null;
+    }
+
+    private function educationUnitKind(?string $unitKerja): string
+    {
+        $upper = strtoupper($this->normalizeText($unitKerja));
+
+        return match (true) {
+            str_starts_with($upper, 'TK') || str_contains($upper, 'TAMAN KANAK') => 'TK',
+            str_starts_with($upper, 'SD') || str_starts_with($upper, 'MI') || str_contains($upper, 'SEKOLAH DASAR') => 'SD',
+            str_starts_with($upper, 'SMP') || str_starts_with($upper, 'MTS') || str_contains($upper, 'SEKOLAH MENENGAH PERTAMA') => 'SMP',
+            default => 'LAIN',
+        };
+    }
+
+    private function asnStatus(mixed $value): ?string
+    {
+        $status = strtoupper(trim((string) $value));
+
+        return in_array($status, ['PNS', 'PPPK'], true) ? $status : null;
+    }
+
+    private function isVacantPegawai(string $pegawai, ?string $jabatan): bool
+    {
+        if ($pegawai === '' || $pegawai === '-') {
+            return true;
+        }
+
+        $key = $this->jobKey($pegawai);
+
+        return in_array($key, ['', 'KOSONG', 'LOWONG'], true)
+            || $key === $this->jobKey($jabatan);
     }
 
     private function matchSkpd(array $sheet, array $skpdRows): ?array
@@ -622,11 +1076,141 @@ class PetaJabatanExcelService
     private function jobKey(?string $value): string
     {
         $value = strtoupper($this->normalizeText($value));
+        $value = str_replace([
+            'SUMBER DAYA MANUSIA',
+            'APARATUR SIPIL NEGARA',
+            'UNIT PELAKSANA TEKNIS DAERAH',
+            'UNIT PELAKSANA TEKNIS',
+            'TATA USAHA',
+            'PENDIDIKAN ANAK USIA DINI',
+            'PENDIDIKAN NON FORMAL',
+            'PENDIDIKAN NONFORMAL',
+            'PENERANGAN JALAN UMUM',
+            'PENERANGAN JALAN LINGKUNGAN',
+            'PENGUJIAN KENDARAAN BERMOTOR',
+            'RUMAH POTONG HEWAN',
+            'TEMPAT PENDARATAN IKAN',
+            'BALAI LATIHAN KERJA',
+            'PERLINDUNGAN PEREMPUAN DAN ANAK',
+            'KEPENDUDUKAN DAN PENCATATAN SIPIL',
+            'RUMAH SUSUN SEDERHANA SEWA',
+            'RUMAH SUSUN DAN SEWA',
+            'SUBBAGIAN',
+            'TATA LAKSANA',
+            'SPIRITUAL',
+        ], [
+            'SDM',
+            'ASN',
+            'UPTD',
+            'UPT',
+            'TU',
+            'PAUD',
+            'PNF',
+            'PNF',
+            'PJU',
+            'PJL',
+            'PKB',
+            'RPH',
+            'TPI',
+            'BLK',
+            'PPA',
+            'DUKCAPIL',
+            'RUMAH SUSUN SEWA',
+            'RUMAH SUSUN SEWA',
+            'SUB BAGIAN',
+            'TATALAKSANA',
+            'SPRITUAL',
+        ], $value);
         $value = preg_replace('/\s+PADA\s+.+$/u', '', $value) ?: $value;
         $value = preg_replace('/\s+KOTA\s+BANJARMASIN$/u', '', $value) ?: $value;
         $value = preg_replace('/[^A-Z0-9]+/u', ' ', $value) ?: $value;
 
         return trim($value);
+    }
+
+    private function jobKeyMatches(string $left, string $right): bool
+    {
+        $left = trim($left);
+        $right = trim($right);
+
+        if ($left === '' || $right === '') {
+            return false;
+        }
+
+        if ($left === $right || str_contains($left, $right) || str_contains($right, $left)) {
+            return true;
+        }
+
+        $leftTokens = $this->significantJobTokens($left);
+        $rightTokens = $this->significantJobTokens($right);
+        $smaller = min(count($leftTokens), count($rightTokens));
+
+        if ($smaller < 3) {
+            return false;
+        }
+
+        $overlap = count(array_intersect($leftTokens, $rightTokens));
+
+        return ($overlap / $smaller) >= 0.8;
+    }
+
+    private function significantJobTokens(string $key): array
+    {
+        $stopwords = [
+            'DAN' => true,
+            'DI' => true,
+            'KE' => true,
+            'PADA' => true,
+            'KOTA' => true,
+            'BANJARMASIN' => true,
+            'KEPALA' => true,
+            'SUB' => true,
+            'BAGIAN' => true,
+            'BIDANG' => true,
+            'SEKSI' => true,
+            'UNIT' => true,
+            'UPT' => true,
+            'UPTD' => true,
+            'DAERAH' => true,
+            'DINAS' => true,
+            'BADAN' => true,
+        ];
+
+        return array_values(array_unique(array_filter(
+            explode(' ', $key),
+            fn (string $token): bool => strlen($token) > 2 && ! isset($stopwords[$token])
+        )));
+    }
+
+    /**
+     * Excel sometimes stores equivalent job names as slash-separated aliases,
+     * while TPP may use an abbreviation such as SDM.
+     */
+    private function jobKeys(?string $value): array
+    {
+        $value = $this->normalizeText($value);
+        $parts = preg_split('~/+~u', $value) ?: [$value];
+        $keys = [];
+
+        foreach (array_unique([$value, ...$parts]) as $part) {
+            $key = $this->jobKey($part);
+
+            if ($key !== '') {
+                $keys[] = $key;
+            }
+
+            $withoutParentheses = $this->normalizeText((string) preg_replace('/\s*\([^)]*\)/u', '', $part));
+
+            if ($withoutParentheses !== $part) {
+                $key = $this->jobKey($withoutParentheses);
+
+                if ($key !== '') {
+                    $keys[] = $key;
+                }
+            }
+        }
+
+        return array_values(array_unique($keys));
     }
 
     private function orgKey(?string $value): string

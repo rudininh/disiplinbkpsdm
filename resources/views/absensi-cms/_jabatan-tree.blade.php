@@ -1,10 +1,14 @@
 @foreach ($nodes as $node)
     @php
         $pegawaiText = trim((string) ($node['pegawai'] ?? ''));
-        $isFilled = $pegawaiText !== '' && $pegawaiText !== '-';
-        $vacancyCount = (int) ($node['vacancy_count'] ?? 1);
         $source = $node['source'] ?? 'tpp';
-        $isCategory = $source === 'category';
+        $isSiasnGroup = $source === 'siasn_group';
+        $isFilled = ($pegawaiText !== '' && $pegawaiText !== '-') || $isSiasnGroup;
+        $vacancyCount = (int) ($node['vacancy_count'] ?? 1);
+        $isCategory = $source === 'category' || ($node['callout_class'] ?? '') === 'functional';
+        $renderedJabatan = isset($displayJobName)
+            ? $displayJobName($node['jabatan'] ?? '-')
+            : ($node['jabatan'] ?? '-');
         $tone = match ($node['callout_class'] ?? 'default') {
             'info', 'warning', 'danger' => $isFilled ? 'border-emerald-600 bg-emerald-50' : 'border-rose-600 bg-rose-50',
             'vacant' => 'border-rose-600 bg-rose-50',
@@ -21,14 +25,23 @@
                 <div class="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1">
                     <span class="font-semibold text-zinc-700">{{ $node['kelas'] ?? '-' }}</span>
                     <span class="text-zinc-400">|</span>
-                    <span class="font-semibold text-zinc-950">{{ $node['jabatan'] ?? '-' }}</span>
-                    @if ($isFilled && ! $isCategory)
+                    <span class="font-semibold text-zinc-950">{{ $renderedJabatan }}</span>
+                    @if ($isSiasnGroup)
+                        <span class="text-zinc-400">|</span>
+                        <span class="text-emerald-700">
+                            B {{ number_format((int) ($node['bezetting'] ?? 0)) }} pegawai SIASN
+                        </span>
+                        @if (! empty($node['sheet_name']))
+                            <span class="text-zinc-400">|</span>
+                            <span class="text-zinc-500">{{ $node['sheet_name'] }}</span>
+                        @endif
+                    @elseif ($isFilled && ! $isCategory)
                         <span class="text-zinc-400">|</span>
                         <span class="text-zinc-700">{{ $pegawaiText }}</span>
                     @elseif ($isCategory && ! empty($node['pegawai']))
                         <span class="text-zinc-400">|</span>
                         <span class="text-indigo-700">{{ $node['pegawai'] }}</span>
-                    @elseif (in_array($source, ['excel', 'tpp_empty'], true))
+                    @elseif (in_array($source, ['excel', 'tpp_empty', 'excel_parent'], true))
                         <span class="text-zinc-400">|</span>
                         <span class="text-rose-700">
                             B {{ $node['bezetting'] ?? 0 }} pegawai terisi / K {{ $node['kebutuhan'] ?? 0 }} kebutuhan / +/- {{ $node['selisih'] ?? '-' }} kekurangan
@@ -42,8 +55,12 @@
                 <span class="shrink-0 rounded-md border px-2 py-1 text-xs font-semibold {{ $isCategory ? 'border-indigo-200 bg-indigo-100 text-indigo-800' : ($isFilled ? 'border-emerald-200 bg-emerald-100 text-emerald-800' : 'border-rose-200 bg-rose-100 text-rose-800') }}">
                     @if ($isCategory)
                         Kategori
+                    @elseif ($isSiasnGroup)
+                        Terisi
+                    @elseif (! $isFilled)
+                        Ada {{ number_format($vacancyCount) }} Jabatan Lowong
                     @else
-                        {{ $isFilled ? 'Terisi' : 'Kosong' }}{{ ! $isFilled && $vacancyCount > 1 ? ' x' . number_format($vacancyCount) : '' }}
+                        Terisi
                     @endif
                 </span>
             </div>
@@ -51,7 +68,7 @@
 
         @if ($children !== [])
             <ul class="mt-2 space-y-2 border-l border-dashed border-zinc-300 pl-4">
-                @include('absensi-cms._jabatan-tree', ['nodes' => $children])
+                @include('absensi-cms._jabatan-tree', ['nodes' => $children, 'displayJobName' => $displayJobName ?? null])
             </ul>
         @endif
     </li>

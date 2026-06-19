@@ -381,6 +381,7 @@ class SiasnProfileController extends Controller
                 $row['absensi_employee_count'] = 0;
                 $row['absensi_lokasi_nama'] = null;
                 $row['absensi_lokasi_id'] = null;
+                $row['siasn_unit_organisasi'] = '';
             }
             unset($row);
 

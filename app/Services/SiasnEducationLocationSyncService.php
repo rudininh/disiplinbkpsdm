@@ -43,16 +43,20 @@ class SiasnEducationLocationSyncService
         $locationMatches = 0;
         $locationMismatches = 0;
         $results = [];
+        $activeKeys = [];
 
         foreach (($scraped['employees']['rows'] ?? []) as $employee) {
             $nip = preg_replace('/\D+/', '', (string) ($employee['nip'] ?? '')) ?? '';
+            $lokasiId = (string) ($employee['lokasi_id'] ?? '');
             if ($nip === '') {
                 continue;
             }
 
+            $activeKeys[$lokasiId . '|' . $nip] = true;
+
             $row = SiasnAbsensiLocationEmployee::query()->updateOrCreate(
                 [
-                    'lokasi_id' => (string) ($employee['lokasi_id'] ?? ''),
+                    'lokasi_id' => $lokasiId,
                     'nip' => $nip,
                 ],
                 [
@@ -111,6 +115,14 @@ class SiasnEducationLocationSyncService
             }
         }
 
+        $inactiveRows = $pegawaiLimit === null
+            ? $this->markMissingEmployeesInactive(
+                self::DINAS_PENDIDIKAN_SKPD_ID,
+                $this->visitedLocationIds($scraped),
+                $activeKeys
+            )
+            : 0;
+
         return [
             'success' => $siasnSuccess > 0 && $siasnFailed === 0,
             'partial_success' => $siasnSuccess > 0 && $siasnFailed > 0,
@@ -123,6 +135,7 @@ class SiasnEducationLocationSyncService
                 'siasn_failed' => $siasnFailed,
                 'location_matches' => $locationMatches,
                 'location_mismatches' => $locationMismatches,
+                'inactive_rows' => $inactiveRows,
             ],
             'results' => $results,
         ];
@@ -164,6 +177,7 @@ class SiasnEducationLocationSyncService
         $stored = 0;
         $matchedLocations = [];
         $results = [];
+        $activeKeys = [];
 
         foreach (($scraped['employees']['rows'] ?? []) as $employee) {
             $nip = preg_replace('/\D+/', '', (string) ($employee['nip'] ?? '')) ?? '';
@@ -177,6 +191,8 @@ class SiasnEducationLocationSyncService
             if ($nip === '' || $matchedUnit === null) {
                 continue;
             }
+
+            $activeKeys[$lokasiId . '|' . $nip] = true;
 
             SiasnAbsensiLocationEmployee::query()->updateOrCreate(
                 [
@@ -211,6 +227,12 @@ class SiasnEducationLocationSyncService
             ];
         }
 
+        $inactiveRows = $this->markMissingEmployeesInactive(
+            self::DINAS_PENDIDIKAN_SKPD_ID,
+            $this->visitedLocationIds($scraped),
+            $activeKeys
+        );
+
         return [
             'success' => true,
             'message' => 'Sinkron pegawai lokasi absensi selesai.',
@@ -219,9 +241,60 @@ class SiasnEducationLocationSyncService
                 'lokasi_cocok' => count($matchedLocations),
                 'pegawai_scraped' => count($scraped['employees']['rows'] ?? []),
                 'stored_rows' => $stored,
+                'inactive_rows' => $inactiveRows,
             ],
             'results' => $results,
         ];
+    }
+
+    private function visitedLocationIds(array $scraped): array
+    {
+        return collect($scraped['visited_locations']['rows'] ?? [])
+            ->pluck('lokasi_id')
+            ->map(fn ($value) => (string) $value)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function markMissingEmployeesInactive(int $skpdId, array $locationIds, array $activeKeys): int
+    {
+        if ($locationIds === []) {
+            return 0;
+        }
+
+        $inactiveRows = 0;
+        $now = now();
+
+        SiasnAbsensiLocationEmployee::query()
+            ->where('skpd_id', $skpdId)
+            ->whereIn('lokasi_id', $locationIds)
+            ->get()
+            ->each(function (SiasnAbsensiLocationEmployee $row) use ($activeKeys, $now, &$inactiveRows): void {
+                $nip = preg_replace('/\D+/', '', (string) ($row->nip ?? '')) ?? '';
+                $key = (string) $row->lokasi_id . '|' . $nip;
+
+                if ($nip === '' || isset($activeKeys[$key])) {
+                    return;
+                }
+
+                $rowData = is_array($row->row_data) ? $row->row_data : [];
+                $rowData['inactive_marked_at'] = $now->toDateTimeString();
+
+                $row->update([
+                    'siasn_pns_profile_id' => null,
+                    'siasn_unit_organisasi' => null,
+                    'siasn_jabatan' => null,
+                    'match_status' => 'tidak_aktif_absensi',
+                    'row_data' => $rowData,
+                    'fetched_at' => $now,
+                ]);
+
+                $inactiveRows++;
+            });
+
+        return $inactiveRows;
     }
 
     private function matchStatus(string $lokasiAbsensi, string $unitOrganisasi): string

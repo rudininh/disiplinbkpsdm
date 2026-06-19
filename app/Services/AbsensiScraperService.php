@@ -68,10 +68,27 @@ class AbsensiScraperService
     public function login(string $username, string $password, int $skpdId = self::DEFAULT_SKPD_ID): array
     {
         $this->resetPortalSession();
-        $this->resetPortalSession();
         $auth = $this->authenticatePortal($username, $password);
         $response = $auth['response'];
         $body = $auth['body'];
+
+        if ($message = $this->loginFailureMessage($auth)) {
+            $this->syncCookiesToLaravelSession();
+
+            return [
+                'success' => false,
+                'message' => $message,
+                'login' => [
+                    'status_code' => $response->getStatusCode(),
+                    'redirect_history' => $this->redirectHistory($response),
+                    'body_preview' => $this->preview($body),
+                ],
+                'skpd_login' => null,
+                'cuti_page' => null,
+                'cookies_count' => count($this->cookieJar->toArray()),
+            ];
+        }
+
         $skpdLogin = $this->loginAsSkpd($skpdId);
         $cutiPage = $this->getCutiPage();
         $success = (bool) ($cutiPage['success'] ?? false);
@@ -724,7 +741,35 @@ class AbsensiScraperService
     {
         $this->resetPortalSession();
         $auth = $this->authenticatePortal($username, $password);
+        if ($message = $this->loginFailureMessage($auth)) {
+            return [
+                'success' => false,
+                'message' => $message,
+                'login' => [
+                    'status_code' => $auth['response']->getStatusCode(),
+                    'redirect_history' => $this->redirectHistory($auth['response']),
+                    'body_preview' => $this->preview($auth['body']),
+                ],
+                'skpd_login' => null,
+                'page' => null,
+            ];
+        }
+
         $skpdLogin = $this->loginAsSkpd($skpdId);
+        if (! ($skpdLogin['success'] ?? false)) {
+            return [
+                'success' => false,
+                'message' => 'Login sebagai SKPD Absensi gagal, sehingga halaman lokasi absensi belum bisa diakses.',
+                'login' => [
+                    'status_code' => $auth['response']->getStatusCode(),
+                    'redirect_history' => $this->redirectHistory($auth['response']),
+                    'body_preview' => $this->preview($auth['body']),
+                ],
+                'skpd_login' => $skpdLogin,
+                'page' => null,
+            ];
+        }
+
         $lokasiPage = $this->getLokasiPage();
 
         if (! ($lokasiPage['success'] ?? false)) {
@@ -744,6 +789,7 @@ class AbsensiScraperService
         $locations = $this->parseLokasiHtml((string) ($lokasiPage['body'] ?? ''));
         $employees = [];
         $fetchedCount = 0;
+        $visitedLocations = [];
 
         foreach ($locations['rows'] as $location) {
             $locationId = (string) ($location['lokasi_id'] ?? '');
@@ -760,6 +806,7 @@ class AbsensiScraperService
                 continue;
             }
 
+            $visitedLocations[$locationId] = $location;
             $parsedEmployees = $this->parseLokasiPegawaiHtml((string) ($pegawaiPage['body'] ?? ''), $location);
             foreach ($parsedEmployees['rows'] as $employee) {
                 if ($pegawaiLimit !== null && $fetchedCount >= $pegawaiLimit) {
@@ -780,6 +827,10 @@ class AbsensiScraperService
             ],
             'skpd_login' => $skpdLogin,
             'locations' => $locations,
+            'visited_locations' => [
+                'row_count' => count($visitedLocations),
+                'rows' => array_values($visitedLocations),
+            ],
             'employees' => [
                 'row_count' => count($employees),
                 'rows' => $employees,
@@ -2088,6 +2139,29 @@ class AbsensiScraperService
     {
         $this->cookieJar = CookieJar::fromArray([], $this->cookieHost());
         $this->syncCookiesToLaravelSession();
+    }
+
+    protected function loginFailureMessage(array $auth): ?string
+    {
+        $body = (string) ($auth['body'] ?? '');
+        $normalized = strtolower($this->normalizeText(strip_tags($body)));
+
+        if (str_contains($normalized, 'username / password tidak ditemukan')
+            || str_contains($normalized, 'username/password tidak ditemukan')) {
+            return 'Login Absensi gagal: Username / Password Tidak Ditemukan. Periksa ABSENSI_USERNAME dan ABSENSI_PASSWORD di .env.';
+        }
+
+        if (str_contains($normalized, 'username atau password salah')
+            || str_contains($normalized, 'password salah')
+            || str_contains($normalized, 'akun tidak ditemukan')) {
+            return 'Login Absensi gagal. Periksa ABSENSI_USERNAME dan ABSENSI_PASSWORD di .env.';
+        }
+
+        if ($this->isLoginPage($body)) {
+            return 'Login Absensi gagal. Periksa ABSENSI_USERNAME dan ABSENSI_PASSWORD di .env.';
+        }
+
+        return null;
     }
 
     protected function request(string $method, string $uri, array $options = []): ResponseInterface

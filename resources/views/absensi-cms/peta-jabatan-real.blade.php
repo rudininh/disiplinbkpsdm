@@ -13,34 +13,199 @@
     $selectedExcelSheet = $excelSheets->firstWhere('index', $selectedSheet) ?? $excelSheets->first();
     $excelSummary = is_array($excelComparison['summary'] ?? null) ? $excelComparison['summary'] : [];
     $selectedSkpd = (string) request('skpd', 'all');
-    $treeRows = $selectedSkpd === 'all'
+    $selectedSkpdMode = 'all';
+    $selectedSkpdValue = '';
+
+    if ($selectedSkpd !== 'all') {
+        if (str_starts_with($selectedSkpd, 'skpd:')) {
+            $selectedSkpdMode = 'skpd';
+            $selectedSkpdValue = substr($selectedSkpd, 5);
+        } elseif (str_starts_with($selectedSkpd, 'index:')) {
+            $selectedSkpdMode = 'index';
+            $selectedSkpdValue = substr($selectedSkpd, 6);
+        } elseif ($skpdRows->contains(fn ($row) => (string) ($row['skpd_id'] ?? '') === $selectedSkpd)) {
+            $selectedSkpdMode = 'skpd';
+            $selectedSkpdValue = $selectedSkpd;
+        } else {
+            $selectedSkpdMode = 'index';
+            $selectedSkpdValue = $selectedSkpd;
+        }
+    }
+
+    $selectedSkpdKey = $selectedSkpdMode === 'all' ? 'all' : $selectedSkpdMode . ':' . $selectedSkpdValue;
+    $treeRows = $selectedSkpdMode === 'all'
         ? $skpdRows
-        : $skpdRows->filter(fn ($row) => (string) ($row['skpd_id'] ?? '') === $selectedSkpd || (string) ($row['index'] ?? '') === $selectedSkpd)->values();
+        : $skpdRows->filter(fn ($row) => $selectedSkpdMode === 'skpd'
+            ? (string) ($row['skpd_id'] ?? '') === $selectedSkpdValue
+            : (string) ($row['index'] ?? '') === $selectedSkpdValue
+        )->values();
     $jobKey = function (?string $value): string {
         $value = strtoupper(trim((string) preg_replace('/\s+/u', ' ', (string) $value)));
+        $value = str_replace([
+            'SUMBER DAYA MANUSIA',
+            'APARATUR SIPIL NEGARA',
+            'UNIT PELAKSANA TEKNIS DAERAH',
+            'UNIT PELAKSANA TEKNIS',
+            'TATA USAHA',
+            'PENDIDIKAN ANAK USIA DINI',
+            'PENDIDIKAN NON FORMAL',
+            'PENDIDIKAN NONFORMAL',
+            'PENERANGAN JALAN UMUM',
+            'PENERANGAN JALAN LINGKUNGAN',
+            'PENGUJIAN KENDARAAN BERMOTOR',
+            'RUMAH POTONG HEWAN',
+            'TEMPAT PENDARATAN IKAN',
+            'BALAI LATIHAN KERJA',
+            'PERLINDUNGAN PEREMPUAN DAN ANAK',
+            'KEPENDUDUKAN DAN PENCATATAN SIPIL',
+            'RUMAH SUSUN SEDERHANA SEWA',
+            'RUMAH SUSUN DAN SEWA',
+            'SUBBAGIAN',
+            'TATA LAKSANA',
+            'SPIRITUAL',
+        ], [
+            'SDM',
+            'ASN',
+            'UPTD',
+            'UPT',
+            'TU',
+            'PAUD',
+            'PNF',
+            'PNF',
+            'PJU',
+            'PJL',
+            'PKB',
+            'RPH',
+            'TPI',
+            'BLK',
+            'PPA',
+            'DUKCAPIL',
+            'RUMAH SUSUN SEWA',
+            'RUMAH SUSUN SEWA',
+            'SUB BAGIAN',
+            'TATALAKSANA',
+            'SPRITUAL',
+        ], $value);
         $value = preg_replace('/\s+PADA\s+.+$/u', '', $value) ?: $value;
         $value = preg_replace('/\s+KOTA\s+BANJARMASIN$/u', '', $value) ?: $value;
         $value = preg_replace('/[^A-Z0-9]+/u', ' ', $value) ?: $value;
 
         return trim($value);
     };
-    $attachVacancies = function (array &$nodes, array &$remaining) use (&$attachVacancies, $jobKey): void {
+    $displayJobName = function (?string $value): string {
+        $value = trim((string) preg_replace('/\s+/u', ' ', (string) $value));
+
+        if ($value === '') {
+            return '-';
+        }
+
+        $parts = preg_split('~/~u', $value) ?: [$value];
+        $displayParts = array_map(function (string $part): string {
+            $part = trim($part);
+
+            if ($part === '') {
+                return $part;
+            }
+
+            $alias = $part;
+            $upper = strtoupper($part);
+            $changed = false;
+
+            if (str_contains($upper, 'SUMBER DAYA MANUSIA') && ! preg_match('/\bSDM\b/iu', $part)) {
+                $alias = preg_replace('/Sumber\s+Daya\s+Manusia/iu', 'SDM', $alias) ?: $alias;
+                $changed = true;
+            } elseif (preg_match('/\bSDM\b/iu', $part) && ! str_contains($upper, 'SUMBER DAYA MANUSIA')) {
+                $alias = preg_replace('/\bSDM\b/iu', 'Sumber Daya Manusia', $alias) ?: $alias;
+                $changed = true;
+            }
+
+            if (str_contains($upper, 'APARATUR SIPIL NEGARA') && ! preg_match('/\bASN\b/iu', $part)) {
+                $alias = preg_replace('/Aparatur\s+Sipil\s+Negara/iu', 'ASN', $alias) ?: $alias;
+                $changed = true;
+            } elseif (preg_match('/\bASN\b/iu', $part) && ! str_contains($upper, 'APARATUR SIPIL NEGARA')) {
+                $alias = preg_replace('/\bASN\b/iu', 'Aparatur Sipil Negara', $alias) ?: $alias;
+                $changed = true;
+            }
+
+            $alias = trim($alias);
+
+            if (! $changed || $alias === '' || strcasecmp($alias, $part) === 0) {
+                return $part;
+            }
+
+            return $part . ' (' . $alias . ')';
+        }, $parts);
+
+        return implode('/ ', $displayParts);
+    };
+    $significantJobTokens = function (string $key): array {
+        $stopwords = [
+            'DAN' => true,
+            'DI' => true,
+            'KE' => true,
+            'PADA' => true,
+            'KOTA' => true,
+            'BANJARMASIN' => true,
+            'KEPALA' => true,
+            'SUB' => true,
+            'BAGIAN' => true,
+            'BIDANG' => true,
+            'SEKSI' => true,
+            'UNIT' => true,
+            'UPT' => true,
+            'UPTD' => true,
+            'DAERAH' => true,
+            'DINAS' => true,
+            'BADAN' => true,
+        ];
+
+        return array_values(array_unique(array_filter(
+            explode(' ', $key),
+            fn (string $token): bool => strlen($token) > 2 && ! isset($stopwords[$token])
+        )));
+    };
+    $jobMatches = function (?string $left, ?string $right) use ($jobKey, $significantJobTokens): bool {
+        $left = $jobKey($left);
+        $right = $jobKey($right);
+
+        if ($left === '' || $right === '') {
+            return false;
+        }
+
+        if ($left === $right || str_contains($left, $right) || str_contains($right, $left)) {
+            return true;
+        }
+
+        $leftTokens = $significantJobTokens($left);
+        $rightTokens = $significantJobTokens($right);
+        $smaller = min(count($leftTokens), count($rightTokens));
+
+        if ($smaller < 3) {
+            return false;
+        }
+
+        $overlap = count(array_intersect($leftTokens, $rightTokens));
+
+        return ($overlap / $smaller) >= 0.8;
+    };
+    $attachVacancies = function (array &$nodes, array &$remaining) use (&$attachVacancies, $jobMatches): void {
         foreach ($nodes as &$node) {
             $children = is_array($node['children'] ?? null) ? $node['children'] : [];
             $attachVacancies($children, $remaining);
-            $nodeKey = $jobKey($node['jabatan'] ?? '');
             $matched = [];
 
             foreach ($remaining as $index => $vacancy) {
-                $categoryKey = $jobKey($vacancy['category'] ?? '');
-
-                if ($categoryKey !== '' && ($categoryKey === $nodeKey || str_contains($nodeKey, $categoryKey) || str_contains($categoryKey, $nodeKey))) {
+                if ($jobMatches($node['jabatan'] ?? '', $vacancy['category_match'] ?? $vacancy['category'] ?? '')) {
                     $matched[] = $vacancy;
                     unset($remaining[$index]);
                 }
             }
 
-            $node['children'] = array_values([...$children, ...$matched]);
+            $isFunctionalNode = str_contains(strtoupper((string) ($node['jabatan'] ?? '')), 'JABATAN FUNGSIONAL')
+                || ($node['callout_class'] ?? '') === 'functional';
+            $node['children'] = $isFunctionalNode
+                ? array_values([...$matched, ...$children])
+                : array_values([...$children, ...$matched]);
         }
         unset($node);
     };
@@ -52,13 +217,42 @@
         $grouped = [];
 
         foreach ($remaining as $index => $vacancy) {
-            $category = trim((string) ($vacancy['category'] ?? 'Jabatan Kosong'));
+            $category = trim((string) (($vacancy['category_match'] ?? null) ?: ($vacancy['category'] ?? 'Jabatan Kosong')));
             $category = $category !== '' ? $category : 'Jabatan Kosong';
             $grouped[$category][] = $vacancy;
             unset($remaining[$index]);
         }
 
         foreach ($grouped as $category => $items) {
+            $itemRows = collect($items);
+            $isPositionGroup = $itemRows->contains(fn ($item) => (bool) ($item['category_is_position'] ?? false));
+            $categoryKelas = $itemRows
+                ->pluck('category_kelas')
+                ->first(fn ($value) => $value !== null && $value !== '');
+            $sheetName = $itemRows
+                ->pluck('sheet_name')
+                ->filter()
+                ->unique()
+                ->implode(', ');
+
+            if ($isPositionGroup) {
+                $nodes[] = [
+                    'kelas' => $categoryKelas,
+                    'jabatan' => $category,
+                    'pegawai' => null,
+                    'children' => $items,
+                    'callout_class' => 'vacant',
+                    'source' => 'excel_parent',
+                    'sheet_name' => $sheetName !== '' ? $sheetName : null,
+                    'bezetting' => 0,
+                    'kebutuhan' => 1,
+                    'selisih' => -1,
+                    'vacancy_count' => 1,
+                ];
+
+                continue;
+            }
+
             $nodes[] = [
                 'kelas' => null,
                 'jabatan' => $category,
@@ -71,7 +265,19 @@
 
         return $nodes;
     };
-    $compactEmptyTppNodes = function (array $nodes) use (&$compactEmptyTppNodes, $jobKey): array {
+    $isVacantPegawai = function (?string $pegawai, ?string $jabatan) use ($jobKey): bool {
+        $pegawai = trim((string) $pegawai);
+
+        if ($pegawai === '' || $pegawai === '-') {
+            return true;
+        }
+
+        $key = $jobKey($pegawai);
+
+        return in_array($key, ['', 'KOSONG', 'LOWONG'], true)
+            || $key === $jobKey($jabatan);
+    };
+    $compactEmptyTppNodes = function (array $nodes) use (&$compactEmptyTppNodes, $jobKey, $isVacantPegawai): array {
         $compacted = [];
         $emptyGroups = [];
 
@@ -79,7 +285,7 @@
             $children = $compactEmptyTppNodes(is_array($node['children'] ?? null) ? $node['children'] : []);
             $pegawai = trim((string) ($node['pegawai'] ?? ''));
             $source = $node['source'] ?? 'tpp';
-            $isEmptyLeaf = $source === 'tpp' && $children === [] && ($pegawai === '' || $pegawai === '-');
+            $isEmptyLeaf = $source === 'tpp' && $children === [] && $isVacantPegawai($pegawai, $node['jabatan'] ?? '');
 
             if ($isEmptyLeaf) {
                 $key = implode('|', [
@@ -116,6 +322,7 @@
         return array_values([...$compacted, ...array_values($emptyGroups)]);
     };
     $excelVacancyMapBySkpd = [];
+    $siasnFunctionalMapBySkpd = [];
 
     foreach ($excelSheets as $sheet) {
         $matchedSkpdId = $sheet['matched_skpd']['skpd_id'] ?? null;
@@ -125,6 +332,32 @@
         }
 
         foreach (($sheet['comparison_records'] ?? []) as $record) {
+            foreach (($record['people_details'] ?? []) as $detail) {
+                if (($detail['source'] ?? '') !== 'siasn') {
+                    continue;
+                }
+
+                $unit = trim((string) (($detail['unit_kerja'] ?? null) ?: ($detail['lokasi_nama'] ?? 'Unit Kerja SIASN')));
+                $unit = $unit !== '' ? $unit : 'Unit Kerja SIASN';
+                $unitKey = $jobKey($unit);
+                $job = trim((string) (($detail['record_jabatan'] ?? null) ?: ($record['jabatan'] ?? ($detail['jabatan'] ?? '-'))));
+                $job = $job !== '' ? $job : '-';
+                $groupKey = implode('|', [$unitKey, $jobKey($job), (string) ($record['kelas'] ?? '')]);
+                $personKey = preg_replace('/\D+/', '', (string) ($detail['nip'] ?? '')) ?: $jobKey(($detail['name'] ?? '') . ' ' . $unit . ' ' . $job);
+
+                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['unit'] = $unit;
+                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['kelas'] = $record['kelas'] ?? ($detail['record_kelas'] ?? null);
+                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['jabatan'] = $job;
+                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['sheet_name'] = $sheet['name'] ?? null;
+                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['people'][$personKey] = [
+                    'kelas' => $record['kelas'] ?? ($detail['record_kelas'] ?? null),
+                    'jabatan' => $detail['jabatan'] ?? $job,
+                    'pegawai' => $detail['name'] ?? $detail['display'] ?? '-',
+                    'nip' => $detail['nip'] ?? null,
+                    'status_asn' => $detail['status_asn'] ?? null,
+                ];
+            }
+
             $vacant = (int) ($record['vacant'] ?? 0);
 
             if ($vacant <= 0) {
@@ -146,10 +379,17 @@
                 'callout_class' => 'vacant',
                 'source' => 'excel',
                 'category' => $record['category'] ?? 'Jabatan Kosong',
+                'category_match' => $record['category_match'] ?? $record['category'] ?? 'Jabatan Kosong',
+                'category_kelas' => $record['category_kelas'] ?? null,
+                'category_is_position' => (bool) ($record['category_is_position'] ?? false)
+                    || (
+                        ! empty($record['category_match'])
+                        && (string) ($record['category_match'] ?? '') !== (string) ($record['category'] ?? '')
+                    ),
                 'sheet_name' => $sheet['name'] ?? null,
-                'bezetting' => (int) ($existing['bezetting'] ?? 0) + (int) ($record['bezetting'] ?? 0),
-                'kebutuhan' => (int) ($existing['kebutuhan'] ?? 0) + (int) ($record['kebutuhan'] ?? 0),
-                'selisih' => (int) ($existing['selisih'] ?? 0) + (int) ($record['selisih'] ?? 0),
+                'bezetting' => (int) ($existing['bezetting'] ?? 0) + (int) ($record['filled'] ?? 0),
+                'kebutuhan' => (int) ($existing['kebutuhan'] ?? 0) + (int) ($record['needed'] ?? $record['kebutuhan'] ?? 0),
+                'selisih' => (int) ($existing['selisih'] ?? 0) + ((int) ($record['filled'] ?? 0) - (int) ($record['needed'] ?? $record['kebutuhan'] ?? 0)),
                 'vacancy_count' => (int) ($existing['vacancy_count'] ?? 0) + $vacant,
             ];
         }
@@ -157,6 +397,76 @@
 
     $excelVacanciesBySkpd = collect($excelVacancyMapBySkpd)
         ->map(fn ($items) => array_values($items))
+        ->all();
+    $siasnFunctionalTreesBySkpd = collect($siasnFunctionalMapBySkpd)
+        ->map(function ($units) {
+            $unitNodes = collect($units)
+                ->sortBy('unit')
+                ->map(function ($unit) {
+                    $jobNodes = collect($unit['jobs'] ?? [])
+                        ->sortBy('jabatan')
+                        ->map(function ($job) {
+                            $people = collect($job['people'] ?? [])
+                                ->sortBy('pegawai')
+                                ->values();
+                            $count = $people->count();
+                            $personNodes = $people
+                                ->map(fn ($person) => [
+                                    'kelas' => $person['kelas'] ?? null,
+                                    'jabatan' => $person['jabatan'] ?? '-',
+                                    'pegawai' => implode(' | ', array_values(array_filter([
+                                        $person['pegawai'] ?? '-',
+                                        $person['nip'] ?? null,
+                                        $person['status_asn'] ?? null,
+                                    ]))),
+                                    'children' => [],
+                                    'callout_class' => 'info',
+                                    'source' => 'siasn_person',
+                                ])
+                                ->all();
+
+                            return [
+                                'kelas' => $job['kelas'] ?? null,
+                                'jabatan' => $job['jabatan'] ?? '-',
+                                'pegawai' => null,
+                                'children' => $personNodes,
+                                'callout_class' => 'info',
+                                'source' => 'siasn_group',
+                                'sheet_name' => $job['sheet_name'] ?? null,
+                                'bezetting' => $count,
+                                'kebutuhan' => $count,
+                                'selisih' => 0,
+                                'vacancy_count' => 0,
+                            ];
+                        })
+                        ->values()
+                        ->all();
+                    $count = collect($jobNodes)->sum(fn ($node) => (int) ($node['bezetting'] ?? 0));
+
+                    return [
+                        'kelas' => null,
+                        'jabatan' => $unit['unit'] ?? 'Unit Kerja SIASN',
+                        'pegawai' => number_format($count) . ' pegawai SIASN',
+                        'children' => $jobNodes,
+                        'callout_class' => 'functional',
+                        'source' => 'siasn_unit',
+                    ];
+                })
+                ->values()
+                ->all();
+            $count = collect($unitNodes)->sum(function ($unitNode) {
+                return collect($unitNode['children'] ?? [])->sum(fn ($node) => (int) ($node['bezetting'] ?? 0));
+            });
+
+            return [[
+                'kelas' => null,
+                'jabatan' => 'Jabatan Fungsional',
+                'pegawai' => number_format($count) . ' pegawai SIASN',
+                'children' => $unitNodes,
+                'callout_class' => 'functional',
+                'source' => 'category',
+            ]];
+        })
         ->all();
 @endphp
 
@@ -319,7 +629,7 @@
                 </form>
 
                 <div class="mt-6 flex flex-wrap gap-2 border-b border-zinc-200">
-                    <a href="{{ route('cms.peta-jabatan-real.index', ['view' => 'tree', 'skpd' => $selectedSkpd]) }}" class="-mb-px inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold {{ $viewMode === 'tree' ? 'border-zinc-950 text-zinc-950' : 'border-transparent text-zinc-500 hover:text-zinc-900' }}">
+                    <a href="{{ route('cms.peta-jabatan-real.index', ['view' => 'tree', 'skpd' => $selectedSkpdKey]) }}" class="-mb-px inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold {{ $viewMode === 'tree' ? 'border-zinc-950 text-zinc-950' : 'border-transparent text-zinc-500 hover:text-zinc-900' }}">
                         <i data-lucide="network" class="h-4 w-4"></i>
                         Tree Chart
                     </a>
@@ -463,7 +773,7 @@
                                                 <tbody class="divide-y divide-zinc-100">
                                                     @forelse (($selectedExcelSheet['comparison_records'] ?? []) as $record)
                                                         <tr>
-                                                            <td class="max-w-xl px-4 py-3 align-top font-medium text-zinc-900">{{ $record['jabatan'] }}</td>
+                                                            <td class="max-w-xl px-4 py-3 align-top font-medium text-zinc-900">{{ $displayJobName($record['jabatan'] ?? '-') }}</td>
                                                             <td class="px-4 py-3 align-top">{{ $record['kelas'] ?? '-' }}</td>
                                                             <td class="px-4 py-3 align-top">{{ $record['bezetting'] ?? '-' }}</td>
                                                             <td class="px-4 py-3 align-top">{{ $record['kebutuhan'] ?? '-' }}</td>
@@ -503,13 +813,15 @@
                             <label class="block">
                                 <span class="text-xs font-semibold uppercase text-zinc-500">SKPD</span>
                                 <select name="skpd" class="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm">
-                                    <option value="all" @selected($selectedSkpd === 'all')>Semua SKPD</option>
+                                    <option value="all" @selected($selectedSkpdKey === 'all')>Semua SKPD</option>
                                     @foreach ($skpdRows as $option)
                                         @php
-                                            $optionValue = (string) ($option['skpd_id'] ?? $option['index'] ?? '');
+                                            $optionValue = isset($option['skpd_id'])
+                                                ? 'skpd:' . (string) $option['skpd_id']
+                                                : 'index:' . (string) ($option['index'] ?? '');
                                             $optionLabel = trim(($option['kode'] ?? '-') . ' - ' . ($option['nama'] ?? 'SKPD tanpa nama'));
                                         @endphp
-                                        <option value="{{ $optionValue }}" @selected($selectedSkpd === $optionValue)>{{ $optionLabel }}</option>
+                                        <option value="{{ $optionValue }}" @selected($selectedSkpdKey === $optionValue)>{{ $optionLabel }}</option>
                                     @endforeach
                                 </select>
                             </label>
@@ -526,6 +838,7 @@
                                 $vacancyNodes = $excelVacanciesBySkpd[(string) ($skpd['skpd_id'] ?? '')] ?? [];
                                 $vacancyCount = collect($vacancyNodes)->sum(fn ($node) => (int) ($node['vacancy_count'] ?? 0));
                                 $realTree = $compactEmptyTppNodes(is_array($skpd['tree'] ?? null) ? $skpd['tree'] : []);
+                                $realTree = array_values([...$realTree, ...($siasnFunctionalTreesBySkpd[(string) ($skpd['skpd_id'] ?? '')] ?? [])]);
                                 $mergedTree = $appendVacancies($realTree, $vacancyNodes);
                             @endphp
                             <article class="rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -550,7 +863,7 @@
                                         </div>
                                     @elseif ($mergedTree !== [])
                                         <ul class="space-y-2">
-                                            @include('absensi-cms._jabatan-tree', ['nodes' => $mergedTree])
+                                            @include('absensi-cms._jabatan-tree', ['nodes' => $mergedTree, 'displayJobName' => $displayJobName])
                                         </ul>
                                     @else
                                         <div class="rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
