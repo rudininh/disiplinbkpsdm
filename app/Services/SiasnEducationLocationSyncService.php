@@ -150,7 +150,7 @@ class SiasnEducationLocationSyncService
                     return false;
                 }
 
-                $matchedLocationNames[(string) ($location['lokasi_id'] ?? '')] = $matched['unit_kerja'] ?? null;
+                $matchedLocationNames[(string) ($location['lokasi_id'] ?? '')] = $matched;
 
                 return true;
             }
@@ -170,6 +170,9 @@ class SiasnEducationLocationSyncService
             $lokasiId = (string) ($employee['lokasi_id'] ?? '');
             $lokasiNama = (string) ($employee['lokasi_nama'] ?? '');
             $matchedUnit = $matchedLocationNames[$lokasiId] ?? $this->matchReferenceUnit($lokasiNama, $referenceLookup);
+            if (is_string($matchedUnit)) {
+                $matchedUnit = $referenceLookup[$this->normalizeUnitName($matchedUnit)] ?? null;
+            }
 
             if ($nip === '' || $matchedUnit === null) {
                 continue;

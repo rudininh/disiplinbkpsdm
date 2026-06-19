@@ -869,8 +869,13 @@ class AbsensiScraperService
     {
         $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_LOKASI_PATH);
         $rows = [];
+        $headers = $crawler->filter('table')->count() > 0
+            ? $this->extractTableHeaders($crawler->filter('table')->first())
+            : [];
 
-        $crawler->filter('table tbody tr')->each(function (Crawler $row) use (&$rows, $location) {
+        $selector = $crawler->filter('table tbody tr')->count() > 0 ? 'table tbody tr' : 'table tr';
+
+        $crawler->filter($selector)->each(function (Crawler $row) use (&$rows, $location, $headers) {
             if ($row->filter('td')->count() === 0) {
                 return;
             }
@@ -880,11 +885,7 @@ class AbsensiScraperService
                 $cells[] = $this->cellLines($cell);
             });
 
-            $identity = $cells[1] ?? [];
-            [$nama, $nip] = $this->splitNameAndNip($identity);
-            if ($nip === '' && count($identity) >= 2) {
-                $nip = preg_replace('/\D+/', '', (string) ($identity[1] ?? '')) ?? '';
-            }
+            [$nama, $nip] = $this->extractLokasiPegawaiIdentity($cells, $headers);
 
             if ($nip === '') {
                 return;
@@ -1469,6 +1470,68 @@ class AbsensiScraperService
         }
 
         return [$text !== '' ? $text : null, null];
+    }
+
+    protected function extractLokasiPegawaiIdentity(array $cells, array $headers = []): array
+    {
+        $flatParts = [];
+        foreach ($cells as $cellParts) {
+            foreach ((array) $cellParts as $part) {
+                $normalized = $this->normalizeText((string) $part);
+                if ($normalized !== '') {
+                    $flatParts[] = $normalized;
+                }
+            }
+        }
+
+        $nip = '';
+        $nama = null;
+
+        foreach ($cells as $cellIndex => $cellParts) {
+            $header = strtolower($this->normalizeText((string) ($headers[$cellIndex] ?? '')));
+            $parts = array_values(array_filter(array_map(fn ($part) => $this->normalizeText((string) $part), (array) $cellParts)));
+            $cellText = $this->normalizeText(implode(' ', $parts));
+
+            if ($nip === '' && preg_match('/\b(\d{8,})\b/u', $cellText, $matches) === 1) {
+                $nip = $matches[1];
+            }
+
+            if ($nama === null && str_contains($header, 'nama')) {
+                [$candidateName] = $this->splitNameAndNip($parts);
+                $nama = $candidateName;
+            }
+
+            if ($nama === null && str_contains($header, 'pegawai')) {
+                [$candidateName] = $this->splitNameAndNip($parts);
+                $nama = $candidateName;
+            }
+        }
+
+        if ($nip === '' || $nama === null) {
+            [$candidateName, $candidateNip] = [null, null];
+            foreach ($cells as $cellParts) {
+                [$cellName, $cellNip] = $this->splitNameAndNip((array) $cellParts);
+                if ($cellNip !== null && $cellNip !== '') {
+                    $candidateName = $cellName;
+                    $candidateNip = $cellNip;
+                    break;
+                }
+            }
+
+            if ($candidateNip === null || $candidateNip === '') {
+                [$candidateName, $candidateNip] = $this->splitNameAndNip($flatParts);
+            }
+
+            $nama ??= $candidateName;
+            $nip = $nip !== '' ? $nip : (string) $candidateNip;
+        }
+
+        if ($nama !== null && $nip !== '') {
+            $nama = $this->normalizeText(preg_replace('/\b' . preg_quote($nip, '/') . '\b/u', '', $nama) ?? $nama);
+            $nama = trim($nama, " \t\n\r\0\x0B-:,");
+        }
+
+        return [$nama, $nip];
     }
 
     protected function cellLines(Crawler $cell): array
@@ -2090,7 +2153,7 @@ class AbsensiScraperService
 
     protected function skpdLoginPath(int $skpdId): string
     {
-        return '/superadmin/skpd/' . max(1, $skpdId);
+        return '/superadmin/skpd/' . max(1, $skpdId) . '/login';
     }
 
     protected function fetchSkpdLoginActions(int $startSkpdId, int $endSkpdId): array

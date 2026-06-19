@@ -275,6 +275,7 @@
                                     <th class="whitespace-nowrap px-4 py-3 font-semibold">Jenjang</th>
                                     <th class="whitespace-nowrap px-4 py-3 font-semibold">NPSN</th>
                                     <th class="min-w-64 px-4 py-3 font-semibold">Unit Kerja</th>
+                                    <th class="min-w-72 px-4 py-3 font-semibold">Unit Kerja Real di SIASN</th>
                                     <th class="whitespace-nowrap px-4 py-3 font-semibold">Kecamatan</th>
                                     <th class="whitespace-nowrap px-4 py-3 font-semibold">Kelurahan</th>
                                     <th class="min-w-72 px-4 py-3 font-semibold">Alamat</th>
@@ -299,6 +300,7 @@
                                             @endif
                                         </td>
                                         <td class="px-4 py-3 font-medium text-zinc-900">{{ $unit['unit_kerja'] ?? '-' }}</td>
+                                        <td class="px-4 py-3 text-zinc-600">{{ $unit['siasn_unit_organisasi'] ?: '-' }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-zinc-600">{{ $unit['kecamatan'] ?? '-' }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-zinc-600">{{ $unit['kelurahan'] ?? '-' }}</td>
                                         <td class="px-4 py-3 text-zinc-600">{{ $unit['alamat'] ?? '-' }}</td>
@@ -318,7 +320,7 @@
                                         <td class="whitespace-nowrap px-4 py-3 text-zinc-600">{{ $unit['status'] ?? '-' }}</td>
                                     </tr>
                                     <tr id="unit-employees-{{ $unit['npsn'] ?? $loop->iteration }}" class="hidden bg-zinc-50">
-                                        <td colspan="9" class="px-4 py-4">
+                                        <td colspan="10" class="px-4 py-4">
                                             <div class="rounded-md border border-zinc-200 bg-white p-4">
                                                 <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                                                     <div>
@@ -335,13 +337,34 @@
                                                 </div>
 
                                                 @if (! empty($unit['absensi_employees']))
-                                                    <div class="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                                                        @foreach ($unit['absensi_employees'] as $employee)
-                                                            <div class="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
-                                                                <div class="text-sm font-medium text-zinc-900">{{ $employee['nama'] ?: '-' }}</div>
-                                                                <div class="mt-1 font-mono text-xs text-zinc-500">{{ $employee['nip'] ?: '-' }}</div>
-                                                            </div>
-                                                        @endforeach
+                                                    <div class="mt-4 overflow-x-auto rounded-md border border-zinc-200">
+                                                        <table class="min-w-full divide-y divide-zinc-200 text-left text-xs">
+                                                            <thead class="bg-zinc-50 uppercase tracking-wide text-zinc-500">
+                                                                <tr>
+                                                                    <th class="whitespace-nowrap px-3 py-2 font-semibold">No</th>
+                                                                    <th class="min-w-56 px-3 py-2 font-semibold">Nama Pegawai</th>
+                                                                    <th class="whitespace-nowrap px-3 py-2 font-semibold">NIP</th>
+                                                                    <th class="min-w-64 px-3 py-2 font-semibold">Lokasi Absensi</th>
+                                                                    <th class="min-w-72 px-3 py-2 font-semibold">Unit Kerja Real di SIASN</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody class="divide-y divide-zinc-100 bg-white">
+                                                                @foreach ($unit['absensi_employees'] as $employee)
+                                                                    <tr class="hover:bg-zinc-50">
+                                                                        <td class="whitespace-nowrap px-3 py-2 text-zinc-500">{{ $loop->iteration }}</td>
+                                                                        <td class="px-3 py-2 font-medium text-zinc-900">{{ $employee['nama'] ?: '-' }}</td>
+                                                                        <td class="whitespace-nowrap px-3 py-2 font-mono text-zinc-600">{{ $employee['nip'] ?: '-' }}</td>
+                                                                        <td class="px-3 py-2 text-zinc-600">
+                                                                            {{ $employee['lokasi_nama'] ?: '-' }}
+                                                                            @if (! empty($employee['lokasi_id']))
+                                                                                <span class="text-zinc-400">#{{ $employee['lokasi_id'] }}</span>
+                                                                            @endif
+                                                                        </td>
+                                                                        <td class="px-3 py-2 text-zinc-600">{{ $employee['siasn_unit_organisasi'] ?: '-' }}</td>
+                                                                    </tr>
+                                                                @endforeach
+                                                            </tbody>
+                                                        </table>
                                                     </div>
                                                 @else
                                                     <div class="mt-4 rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-3 py-4 text-sm text-zinc-500">
@@ -353,7 +376,7 @@
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="9" class="px-4 py-8 text-center text-sm text-zinc-500">Data referensi unit kerja belum tersedia.</td>
+                                        <td colspan="10" class="px-4 py-8 text-center text-sm text-zinc-500">Data referensi unit kerja belum tersedia.</td>
                                     </tr>
                                 @endforelse
                             </tbody>

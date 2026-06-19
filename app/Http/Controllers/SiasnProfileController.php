@@ -277,6 +277,8 @@ class SiasnProfileController extends Controller
                     'nip' => (string) $employee->nip,
                     'lokasi_id' => (string) $employee->lokasi_id,
                     'lokasi_nama' => (string) $employee->lokasi_nama,
+                    'siasn_unit_organisasi' => (string) ($employee->siasn_unit_organisasi ?? ''),
+                    'siasn_jabatan' => (string) ($employee->siasn_jabatan ?? ''),
                     'fetched_at' => $employee->fetched_at?->format('Y-m-d H:i:s'),
                 ])
                 ->all();
@@ -285,6 +287,12 @@ class SiasnProfileController extends Controller
             $row['absensi_employee_count'] = count($employees);
             $row['absensi_lokasi_nama'] = $employees[0]['lokasi_nama'] ?? null;
             $row['absensi_lokasi_id'] = $employees[0]['lokasi_id'] ?? null;
+            $row['siasn_unit_organisasi'] = collect($employees)
+                ->pluck('siasn_unit_organisasi')
+                ->filter()
+                ->unique()
+                ->values()
+                ->implode(', ');
         }
         unset($row);
 

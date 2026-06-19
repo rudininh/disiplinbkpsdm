@@ -115,4 +115,95 @@ class AbsensiScraperServiceTest extends TestCase
 
         $this->assertTrue($service->exposeIsSkpdListingPage($html));
     }
+
+    public function test_skpd_login_fallback_uses_login_path(): void
+    {
+        $service = new class extends AbsensiScraperService {
+            public function exposeExtractSkpdLoginAction(string $html, int $skpdId): array
+            {
+                return $this->extractSkpdLoginAction($html, $skpdId);
+            }
+        };
+
+        $action = $service->exposeExtractSkpdLoginAction('<table><tbody></tbody></table>', 1);
+
+        $this->assertSame('GET', $action['method']);
+        $this->assertSame('/superadmin/skpd/1/login', $action['url']);
+        $this->assertSame('fallback', $action['source']);
+    }
+
+    public function test_parse_lokasi_pegawai_reads_separate_name_and_nip_columns(): void
+    {
+        $service = new class extends AbsensiScraperService {
+            public function exposeParseLokasiPegawaiHtml(string $html, array $location): array
+            {
+                return $this->parseLokasiPegawaiHtml($html, $location);
+            }
+        };
+
+        $html = <<<'HTML'
+            <table>
+                <thead>
+                    <tr>
+                        <th>No</th>
+                        <th>Nama</th>
+                        <th>NIP</th>
+                        <th>Aksi</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1</td>
+                        <td>JAHRAH</td>
+                        <td>196905222022212001</td>
+                        <td>-</td>
+                    </tr>
+                </tbody>
+            </table>
+        HTML;
+
+        $parsed = $service->exposeParseLokasiPegawaiHtml($html, [
+            'lokasi_id' => '1777',
+            'nama' => 'SDN SURGI MUFTI 4',
+            'alamat' => 'Jl. Surgi Mufti',
+            'lat' => '-3.3',
+            'long' => '114.6',
+        ]);
+
+        $this->assertSame(1, $parsed['row_count']);
+        $this->assertSame('196905222022212001', $parsed['rows'][0]['nip']);
+        $this->assertSame('JAHRAH', $parsed['rows'][0]['nama']);
+        $this->assertSame('1777', $parsed['rows'][0]['lokasi_id']);
+        $this->assertSame('SDN SURGI MUFTI 4', $parsed['rows'][0]['lokasi_nama']);
+    }
+
+    public function test_parse_lokasi_pegawai_reads_combined_employee_column(): void
+    {
+        $service = new class extends AbsensiScraperService {
+            public function exposeParseLokasiPegawaiHtml(string $html, array $location): array
+            {
+                return $this->parseLokasiPegawaiHtml($html, $location);
+            }
+        };
+
+        $html = <<<'HTML'
+            <table>
+                <tbody>
+                    <tr>
+                        <td>1</td>
+                        <td>JAHRAH<br>196905222022212001</td>
+                    </tr>
+                </tbody>
+            </table>
+        HTML;
+
+        $parsed = $service->exposeParseLokasiPegawaiHtml($html, [
+            'lokasi_id' => '1777',
+            'nama' => 'SDN SURGI MUFTI 4',
+        ]);
+
+        $this->assertSame(1, $parsed['row_count']);
+        $this->assertSame('196905222022212001', $parsed['rows'][0]['nip']);
+        $this->assertSame('JAHRAH', $parsed['rows'][0]['nama']);
+    }
 }
