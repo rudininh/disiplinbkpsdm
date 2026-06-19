@@ -146,12 +146,22 @@ class SiasnProfileService
     private function findSummary(string $nip, string $token): array
     {
         $attempts = [
-            ['PNS', '/profilasn/api/pns-siasn'],
-            ['PPPK', '/profilasn/api/pppk-siasn'],
+            ['PNS', '/profilasn/api/pns-siasn', ['nip_baru' => $nip]],
+            ['PPPK', '/profilasn/api/pppk', ['nip_lama' => '', 'nip_baru' => $nip]],
+            ['PPPK', '/profilasn/api/pppk-siasn', ['nip_baru' => $nip]],
         ];
 
-        foreach ($attempts as [$jenisAsn, $path]) {
-            $response = $this->get($path, ['nip_baru' => $nip], $token);
+        foreach ($attempts as [$jenisAsn, $path, $query]) {
+            try {
+                $response = $this->get($path, $query, $token);
+            } catch (RuntimeException $exception) {
+                if ($exception->getCode() === 404) {
+                    continue;
+                }
+
+                throw $exception;
+            }
+
             $summary = $this->firstValue($response);
             if ($summary !== null) {
                 return [$response, $summary, $jenisAsn];
@@ -180,7 +190,7 @@ class SiasnProfileService
         }
 
         if (! $response->successful()) {
-            throw new RuntimeException('SIASN mengembalikan error HTTP ' . $response->status() . '.');
+            throw new RuntimeException('SIASN mengembalikan error HTTP ' . $response->status() . '.', $response->status());
         }
 
         $json = $response->json();

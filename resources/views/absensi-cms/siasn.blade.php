@@ -70,9 +70,9 @@
             </nav>
         </aside>
 
-        <main class="min-w-0 flex-1">
+        <main class="min-w-0 flex-1 overflow-x-hidden">
             <header class="border-b border-zinc-200 bg-white">
-                <div class="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
+                <div class="flex w-full flex-col gap-4 px-4 py-4 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
                     <div class="flex items-center gap-3">
                         <div class="flex h-11 w-11 items-center justify-center rounded-md bg-zinc-950 text-white">
                             <i data-lucide="shield-check" class="h-5 w-5"></i>
@@ -96,8 +96,8 @@
                 </div>
             </header>
 
-            <section class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-                <div class="grid items-start gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(420px,1fr)]">
+            <section class="w-full px-4 py-6 sm:px-6 lg:px-8">
+                <div class="grid items-start gap-5 xl:grid-cols-[minmax(320px,0.8fr)_minmax(420px,1fr)]">
                     <div class="space-y-4">
                 <div class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
                     <div class="flex items-center gap-2">
@@ -197,6 +197,13 @@
                     <div>
                         <label class="block text-sm font-medium text-zinc-700" for="login_nip">NIP Test</label>
                         <input id="login_nip" name="nip" value="{{ old('nip') }}" inputmode="numeric" maxlength="18" class="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100" placeholder="Kosongkan untuk cek token lokal">
+                        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                            <span>Sistem cek PNS dulu, lalu PPPK bila PNS tidak ditemukan.</span>
+                            <a href="https://siasn-instansi.bkn.go.id/peremajaan/profil/pppk/" target="_blank" class="inline-flex items-center gap-1 font-medium text-cyan-700 hover:text-cyan-800">
+                                <i data-lucide="external-link" class="h-3.5 w-3.5"></i>
+                                Profil PPPK SIASN
+                            </a>
+                        </div>
                     </div>
 
                     <div>
@@ -233,19 +240,32 @@
                                         <span>Diambil {{ $educationUnitSource['captured_at'] }}</span>
                                     @endif
                                 </div>
-                                <form method="POST" action="{{ route('cms.siasn.sync-absensi-reference-employees') }}" class="mt-4">
-                                    @csrf
-                                    <button type="submit" class="inline-flex items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800">
-                                        <i data-lucide="refresh-cw" class="h-4 w-4"></i>
-                                        Sinkron Pegawai Absensi
-                                    </button>
-                                </form>
+                                <div class="mt-4 flex flex-wrap gap-2">
+                                    <form method="POST" action="{{ route('cms.siasn.sync-absensi-reference-employees') }}">
+                                        @csrf
+                                        <button type="submit" class="inline-flex items-center justify-center gap-2 rounded-md bg-zinc-950 px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800">
+                                            <i data-lucide="refresh-cw" class="h-4 w-4"></i>
+                                            Sinkron Pegawai Absensi
+                                        </button>
+                                    </form>
+                                    <form method="POST" action="{{ route('cms.siasn.sync-all-absensi-employees-siasn') }}" onsubmit="return confirm('Cek SIASN untuk semua pegawai di tabel? Proses ini bisa memerlukan waktu.');">
+                                        @csrf
+                                        <button type="submit" class="inline-flex items-center justify-center gap-2 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100">
+                                            <i data-lucide="square-check-big" class="h-4 w-4"></i>
+                                            Cek Semua SIASN
+                                        </button>
+                                    </form>
+                                </div>
                             </div>
 
-                            <div class="grid grid-cols-2 gap-2 text-center text-sm sm:grid-cols-5">
+                            <div class="grid grid-cols-2 gap-2 text-center text-sm sm:grid-cols-6">
                                 <div class="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
                                     <div class="text-lg font-semibold text-zinc-950">{{ number_format($educationUnitSummary['total'] ?? 0, 0, ',', '.') }}</div>
                                     <div class="text-xs text-zinc-500">Total</div>
+                                </div>
+                                <div class="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
+                                    <div class="text-lg font-semibold text-zinc-950">{{ number_format($educationUnitSummary['tk'] ?? 0, 0, ',', '.') }}</div>
+                                    <div class="text-xs text-zinc-500">TK</div>
                                 </div>
                                 <div class="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
                                     <div class="text-lg font-semibold text-zinc-950">{{ number_format($educationUnitSummary['sd_sederajat'] ?? 0, 0, ',', '.') }}</div>
@@ -346,6 +366,9 @@
                                                                     <th class="whitespace-nowrap px-3 py-2 font-semibold">NIP</th>
                                                                     <th class="min-w-64 px-3 py-2 font-semibold">Lokasi Absensi</th>
                                                                     <th class="min-w-72 px-3 py-2 font-semibold">Unit Kerja Real di SIASN</th>
+                                                                    <th class="min-w-72 px-3 py-2 font-semibold">Jabatan SIASN</th>
+                                                                    <th class="whitespace-nowrap px-3 py-2 font-semibold">Status</th>
+                                                                    <th class="whitespace-nowrap px-3 py-2 text-right font-semibold">Cek</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody class="divide-y divide-zinc-100 bg-white">
@@ -361,6 +384,29 @@
                                                                             @endif
                                                                         </td>
                                                                         <td class="px-3 py-2 text-zinc-600">{{ $employee['siasn_unit_organisasi'] ?: '-' }}</td>
+                                                                        <td class="px-3 py-2 text-zinc-600">{{ $employee['siasn_jabatan'] ?: '-' }}</td>
+                                                                        <td class="whitespace-nowrap px-3 py-2">
+                                                                            @php($statusAsn = $employee['status_asn'] ?? '')
+                                                                            @if ($statusAsn !== '')
+                                                                                <span @class([
+                                                                                    'inline-flex rounded-md border px-2 py-1 text-xs font-medium',
+                                                                                    'border-sky-200 bg-sky-50 text-sky-700' => $statusAsn === 'PNS',
+                                                                                    'border-violet-200 bg-violet-50 text-violet-700' => $statusAsn === 'PPPK',
+                                                                                    'border-amber-200 bg-amber-50 text-amber-700' => $statusAsn === 'PENSIUN/MUTASI',
+                                                                                    'border-zinc-200 bg-zinc-50 text-zinc-600' => ! in_array($statusAsn, ['PNS', 'PPPK', 'PENSIUN/MUTASI'], true),
+                                                                                ])>{{ $statusAsn }}</span>
+                                                                            @endif
+                                                                        </td>
+                                                                        <td class="whitespace-nowrap px-3 py-2 text-right">
+                                                                            <form method="POST" action="{{ route('cms.siasn.sync-absensi-employee-siasn') }}" class="inline-flex">
+                                                                                @csrf
+                                                                                <input type="hidden" name="lokasi_id" value="{{ $employee['lokasi_id'] }}">
+                                                                                <input type="hidden" name="nip" value="{{ $employee['nip'] }}">
+                                                                                <button type="submit" title="Cek SIASN" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-600 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700">
+                                                                                    <i data-lucide="square-check-big" class="h-4 w-4"></i>
+                                                                                </button>
+                                                                            </form>
+                                                                        </td>
                                                                     </tr>
                                                                 @endforeach
                                                             </tbody>

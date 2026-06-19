@@ -158,6 +158,128 @@ class SiasnProfileController extends Controller
             ->with('siasn_result', $result);
     }
 
+    public function syncAbsensiEmployeeSiasn(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'lokasi_id' => ['required', 'string', 'max:64'],
+            'nip' => ['required', 'digits:18'],
+        ]);
+
+        $storedToken = $this->storedSiasnToken($request);
+        if ($storedToken === null) {
+            return redirect()
+                ->route('cms.siasn.index')
+                ->with('siasn_result', [
+                    'success' => false,
+                    'message' => 'Token SIASN belum tersimpan atau sudah kedaluwarsa. Jalankan Tes Login SIASN terlebih dahulu.',
+                ]);
+        }
+
+        $employee = SiasnAbsensiLocationEmployee::query()
+            ->where('lokasi_id', $data['lokasi_id'])
+            ->where('nip', $data['nip'])
+            ->first();
+
+        if ($employee === null) {
+            return redirect()
+                ->route('cms.siasn.index')
+                ->with('siasn_result', [
+                    'success' => false,
+                    'message' => 'Pegawai absensi tidak ditemukan untuk sinkron SIASN.',
+            ]);
+        }
+
+        $sync = $this->syncAbsensiEmployeeWithSiasn($employee, $storedToken['token']);
+        $result = [
+            'success' => $sync['success'],
+            'message' => $sync['message'],
+        ];
+
+        return redirect()
+            ->route('cms.siasn.index')
+            ->with('siasn_result', $result);
+    }
+
+    public function syncAllAbsensiEmployeesSiasn(Request $request): RedirectResponse
+    {
+        $storedToken = $this->storedSiasnToken($request);
+        if ($storedToken === null) {
+            return redirect()
+                ->route('cms.siasn.index')
+                ->with('siasn_result', [
+                    'success' => false,
+                    'message' => 'Token SIASN belum tersimpan atau sudah kedaluwarsa. Jalankan Tes Login SIASN terlebih dahulu.',
+                ]);
+        }
+
+        $employees = SiasnAbsensiLocationEmployee::query()
+            ->where('skpd_id', 1)
+            ->where('match_status', 'lokasi_absensi_cocok')
+            ->whereNotNull('nip')
+            ->orderBy('lokasi_nama')
+            ->orderBy('nama')
+            ->get();
+
+        if ($employees->isEmpty()) {
+            return redirect()
+                ->route('cms.siasn.index')
+                ->with('siasn_result', [
+                    'success' => false,
+                    'message' => 'Belum ada pegawai absensi yang bisa dicek ke SIASN. Jalankan sinkron pegawai absensi terlebih dahulu.',
+                ]);
+        }
+
+        $checked = 0;
+        $success = 0;
+        $notFound = 0;
+        $failed = 0;
+        $skipped = 0;
+        $failedExamples = [];
+
+        foreach ($employees as $employee) {
+            $nip = preg_replace('/\D+/', '', (string) $employee->nip) ?? '';
+            if (strlen($nip) !== 18) {
+                $skipped++;
+                continue;
+            }
+
+            $checked++;
+            $sync = $this->syncAbsensiEmployeeWithSiasn($employee, $storedToken['token']);
+            if ($sync['not_found']) {
+                $notFound++;
+            } elseif ($sync['success']) {
+                $success++;
+            } else {
+                $failed++;
+                if (count($failedExamples) < 3) {
+                    $failedExamples[] = ($employee->nama ?: $employee->nip) . ': ' . $sync['error'];
+                }
+            }
+        }
+
+        $message = 'Cek SIASN semua pegawai selesai. '
+            . $success . ' aktif tersinkron, '
+            . $notFound . ' ditandai PENSIUN/MUTASI, '
+            . $failed . ' gagal';
+
+        if ($skipped > 0) {
+            $message .= ', ' . $skipped . ' dilewati karena NIP tidak valid';
+        }
+
+        $message .= ' dari ' . $checked . ' pegawai dicek.';
+
+        if ($failedExamples !== []) {
+            $message .= ' Contoh gagal: ' . implode('; ', $failedExamples) . '.';
+        }
+
+        return redirect()
+            ->route('cms.siasn.index')
+            ->with('siasn_result', [
+                'success' => $failed === 0,
+                'message' => $message,
+            ]);
+    }
+
     private function siasnView(Request $request, ?array $result = null): View
     {
         $educationUnitReference = $this->educationUnitReference();
@@ -216,6 +338,7 @@ class SiasnProfileController extends Controller
     {
         $summary = [
             'total' => count($rows),
+            'tk' => 0,
             'sd_sederajat' => 0,
             'smp_sederajat' => 0,
             'sd' => 0,
@@ -225,6 +348,10 @@ class SiasnProfileController extends Controller
         ];
 
         foreach ($rows as $row) {
+            if (($row['jenjang'] ?? null) === 'TK' || ($row['bentuk'] ?? null) === 'TK') {
+                $summary['tk']++;
+            }
+
             if (($row['jenjang'] ?? null) === 'SD Sederajat') {
                 $summary['sd_sederajat']++;
             }
@@ -234,6 +361,7 @@ class SiasnProfileController extends Controller
             }
 
             match ($row['bentuk'] ?? null) {
+                'TK' => null,
                 'SD' => $summary['sd']++,
                 'MI' => $summary['mi']++,
                 'SMP' => $summary['smp']++,
@@ -259,11 +387,14 @@ class SiasnProfileController extends Controller
             return $rows;
         }
 
-        $employeesByNpsn = SiasnAbsensiLocationEmployee::query()
+        $employeeRows = SiasnAbsensiLocationEmployee::query()
+            ->with('siasnProfile')
             ->where('skpd_id', 1)
             ->where('match_status', 'lokasi_absensi_cocok')
             ->latest('fetched_at')
-            ->get()
+            ->get();
+
+        $employeesByNpsn = $employeeRows
             ->groupBy(fn (SiasnAbsensiLocationEmployee $employee): string => (string) data_get($employee->row_data, 'referensi_npsn'));
 
         foreach ($rows as &$row) {
@@ -279,6 +410,7 @@ class SiasnProfileController extends Controller
                     'lokasi_nama' => (string) $employee->lokasi_nama,
                     'siasn_unit_organisasi' => (string) ($employee->siasn_unit_organisasi ?? ''),
                     'siasn_jabatan' => (string) ($employee->siasn_jabatan ?? ''),
+                    'status_asn' => $this->employeeAsnStatus($employee),
                     'fetched_at' => $employee->fetched_at?->format('Y-m-d H:i:s'),
                 ])
                 ->all();
@@ -297,6 +429,75 @@ class SiasnProfileController extends Controller
         unset($row);
 
         return $rows;
+    }
+
+    private function employeeAsnStatus(SiasnAbsensiLocationEmployee $employee): string
+    {
+        $jenisAsn = strtoupper(trim((string) ($employee->siasnProfile?->jenis_asn ?? '')));
+        if (in_array($jenisAsn, ['PNS', 'PPPK'], true)) {
+            return $jenisAsn;
+        }
+
+        $siasnStatus = strtoupper(trim((string) data_get($employee->row_data, 'siasn_status')));
+        if ($siasnStatus === 'PENSIUN/MUTASI') {
+            return 'PENSIUN/MUTASI';
+        }
+
+        return '';
+    }
+
+    private function syncAbsensiEmployeeWithSiasn(SiasnAbsensiLocationEmployee $employee, string $token): array
+    {
+        $nip = preg_replace('/\D+/', '', (string) $employee->nip) ?? '';
+
+        try {
+            $siasn = $this->service->fetchAndStore($nip, $token);
+            $profile = $siasn['profile'];
+            $rowData = is_array($employee->row_data) ? $employee->row_data : [];
+            unset($rowData['siasn_status'], $rowData['siasn_error']);
+
+            $employee->update([
+                'siasn_pns_profile_id' => $profile->id,
+                'siasn_unit_organisasi' => $profile->unit_organisasi,
+                'siasn_jabatan' => $profile->jabatan,
+                'row_data' => $rowData,
+                'fetched_at' => now(),
+            ]);
+
+            return [
+                'success' => true,
+                'not_found' => false,
+                'error' => null,
+                'message' => 'Sinkron SIASN berhasil untuk ' . ($employee->nama ?: $nip) . '.',
+            ];
+        } catch (\Throwable $exception) {
+            $rowData = is_array($employee->row_data) ? $employee->row_data : [];
+            $notFound = str_contains($exception->getMessage(), 'Data PNS/PPPK tidak ditemukan');
+            $rowData['siasn_status'] = $notFound ? 'PENSIUN/MUTASI' : null;
+            $rowData['siasn_error'] = $exception->getMessage();
+
+            $update = [
+                'row_data' => array_filter($rowData, static fn ($value) => $value !== null),
+                'fetched_at' => now(),
+            ];
+
+            if ($notFound) {
+                $update['siasn_pns_profile_id'] = null;
+                $update['siasn_unit_organisasi'] = null;
+                $update['siasn_jabatan'] = null;
+            }
+
+            $employee->update($update);
+
+            return [
+                'success' => $notFound,
+                'not_found' => $notFound,
+                'error' => $exception->getMessage(),
+                'message' => $notFound
+                    ? 'Data SIASN tidak ditemukan untuk ' . ($employee->nama ?: $nip) . '; status ditandai PENSIUN/MUTASI.'
+                    : 'Sinkron SIASN gagal untuk ' . ($employee->nama ?: $nip) . ': ' . $exception->getMessage(),
+            ];
+        }
     }
 
     private function educationEmployeeSummary(array $rows): array
