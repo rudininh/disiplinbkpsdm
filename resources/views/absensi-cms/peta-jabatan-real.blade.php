@@ -722,29 +722,93 @@
                                                 $maxRow = max((int) ($grid['max_row'] ?? 1), 1);
                                                 $cellWidth = 34;
                                                 $cellHeight = 22;
-                                                $chartWidth = $maxCol * $cellWidth;
-                                                $chartHeight = $maxRow * $cellHeight;
+                                                $chartScale = 1.28;
+                                                $chartWidth = (int) ceil((int) ($grid['width_px'] ?? ($maxCol * $cellWidth)) * $chartScale);
+                                                $chartHeight = (int) ceil((int) ($grid['height_px'] ?? ($maxRow * $cellHeight)) * $chartScale);
                                             @endphp
                                             <div class="relative bg-white"
-                                                style="width: {{ $chartWidth }}px; height: {{ $chartHeight }}px; background-image: linear-gradient(to right, #d4d4d8 1px, transparent 1px), linear-gradient(to bottom, #d4d4d8 1px, transparent 1px); background-size: {{ $cellWidth }}px {{ $cellHeight }}px;">
+                                                style="width: {{ $chartWidth }}px; height: {{ $chartHeight }}px;">
+                                                <svg class="pointer-events-none absolute inset-0 z-0" width="{{ $chartWidth }}" height="{{ $chartHeight }}" viewBox="0 0 {{ $chartWidth }} {{ $chartHeight }}" aria-hidden="true">
+                                                    @php
+                                                        $gridLineX = 0;
+                                                    @endphp
+                                                    <line x1="0" y1="0" x2="0" y2="{{ $chartHeight }}" stroke="#d4d4d8" stroke-width="1"></line>
+                                                    @foreach (($grid['columns_px'] ?? []) as $columnWidth)
+                                                        @php
+                                                            $gridLineX += (float) $columnWidth * $chartScale;
+                                                        @endphp
+                                                        <line x1="{{ $gridLineX }}" y1="0" x2="{{ $gridLineX }}" y2="{{ $chartHeight }}" stroke="#d4d4d8" stroke-width="1"></line>
+                                                    @endforeach
+                                                    @php
+                                                        $gridLineY = 0;
+                                                    @endphp
+                                                    <line x1="0" y1="0" x2="{{ $chartWidth }}" y2="0" stroke="#d4d4d8" stroke-width="1"></line>
+                                                    @foreach (($grid['rows_px'] ?? []) as $rowHeight)
+                                                        @php
+                                                            $gridLineY += (float) $rowHeight * $chartScale;
+                                                        @endphp
+                                                        <line x1="0" y1="{{ $gridLineY }}" x2="{{ $chartWidth }}" y2="{{ $gridLineY }}" stroke="#d4d4d8" stroke-width="1"></line>
+                                                    @endforeach
+                                                </svg>
+                                                <svg class="pointer-events-none absolute inset-0" style="z-index: 5;" width="{{ $chartWidth }}" height="{{ $chartHeight }}" viewBox="0 0 {{ $chartWidth }} {{ $chartHeight }}" aria-hidden="true">
+                                                    <defs>
+                                                        <marker id="org-arrow" markerWidth="12" markerHeight="12" refX="10.5" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+                                                            <path d="M1,1 L11,6 L1,11 Z" fill="#18181b"></path>
+                                                        </marker>
+                                                    </defs>
+                                                    @foreach (($grid['connectors'] ?? []) as $connector)
+                                                        @if (! empty($connector['paths']))
+                                                            @foreach (($connector['paths'] ?? []) as $path)
+                                                                @php
+                                                                    $pointStrings = [];
+
+                                                                    foreach (($path['points'] ?? []) as $point) {
+                                                                        $pointStrings[] = round((float) ($point['x'] ?? 0) * $chartScale, 3) . ',' . round((float) ($point['y'] ?? 0) * $chartScale, 3);
+                                                                    }
+                                                                @endphp
+                                                                @if (count($pointStrings) >= 2)
+                                                                    <polyline points="{{ implode(' ', $pointStrings) }}" fill="none" stroke="#18181b" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#org-arrow)"></polyline>
+                                                                @endif
+                                                            @endforeach
+                                                        @else
+                                                            @php
+                                                                $parentX = (float) ($connector['parent_x'] ?? 0) * $chartScale;
+                                                                $parentY = (float) ($connector['parent_y'] ?? 0) * $chartScale + 3;
+                                                                $busY = (float) ($connector['bus_y'] ?? 0) * $chartScale;
+                                                                $minX = (float) ($connector['min_x'] ?? 0) * $chartScale;
+                                                                $maxX = (float) ($connector['max_x'] ?? 0) * $chartScale;
+                                                            @endphp
+                                                            <line x1="{{ $parentX }}" y1="{{ $parentY }}" x2="{{ $parentX }}" y2="{{ $busY }}" stroke="#18181b" stroke-width="2.3" stroke-linecap="round"></line>
+                                                            <line x1="{{ $minX }}" y1="{{ $busY }}" x2="{{ $maxX }}" y2="{{ $busY }}" stroke="#18181b" stroke-width="2.3" stroke-linecap="round"></line>
+                                                            @foreach (($connector['children'] ?? []) as $child)
+                                                                @php
+                                                                    $childX = (float) ($child['x'] ?? 0) * $chartScale;
+                                                                    $childY = max((float) ($child['y'] ?? 0) * $chartScale - 8, $busY);
+                                                                @endphp
+                                                                <line x1="{{ $childX }}" y1="{{ $busY }}" x2="{{ $childX }}" y2="{{ $childY }}" stroke="#18181b" stroke-width="2.3" stroke-linecap="round" marker-end="url(#org-arrow)"></line>
+                                                            @endforeach
+                                                        @endif
+                                                    @endforeach
+                                                </svg>
                                                 @foreach (($grid['cells'] ?? []) as $cell)
                                                     @php
                                                         $kind = $cell['kind'] ?? 'text';
                                                         $cellClass = match ($kind) {
-                                                            'title' => 'border-transparent bg-white text-center text-[11px] font-bold uppercase text-zinc-950',
-                                                            'position' => 'border-zinc-900 bg-lime-200 text-center text-[10px] font-medium text-zinc-950',
-                                                            'class' => 'border-zinc-900 bg-lime-100 text-center text-[10px] text-zinc-950',
-                                                            'header' => 'border-zinc-900 bg-zinc-200 text-center text-[10px] font-semibold text-zinc-950',
-                                                            'number' => 'border-zinc-900 bg-white text-center text-[10px] text-zinc-950',
-                                                            default => 'border-zinc-900 bg-white text-[10px] text-zinc-950',
+                                                            'title' => 'border-transparent bg-white text-center text-[15px] font-bold uppercase leading-tight text-zinc-950',
+                                                            'position' => 'flex items-center justify-center border-zinc-900 bg-lime-200 text-center text-[14px] font-semibold leading-[1.18] text-zinc-950',
+                                                            'class' => 'flex items-center justify-center border-zinc-900 bg-lime-100 text-center text-[12px] font-medium leading-tight text-zinc-950',
+                                                            'header' => 'flex items-center justify-center border-zinc-900 bg-zinc-200 text-center text-[12px] font-semibold leading-tight text-zinc-950',
+                                                            'number' => 'flex items-center justify-center border-zinc-900 bg-white text-center text-[12px] leading-tight text-zinc-950',
+                                                            default => 'border-zinc-900 bg-white text-[12px] leading-[1.18] text-zinc-950',
                                                         };
-                                                        $left = max(((int) $cell['col'] - 1) * $cellWidth, 0);
-                                                        $top = max(((int) $cell['row'] - 1) * $cellHeight, 0);
-                                                        $width = max((int) ($cell['col_span'] ?? 1) * $cellWidth, $cellWidth);
-                                                        $height = max((int) ($cell['row_span'] ?? 1) * $cellHeight, $cellHeight);
+                                                        $left = max((float) ($cell['left_px'] ?? (((int) $cell['col'] - 1) * $cellWidth)) * $chartScale, 0);
+                                                        $top = max((float) ($cell['top_px'] ?? (((int) $cell['row'] - 1) * $cellHeight)) * $chartScale, 0);
+                                                        $width = max((float) ($cell['width_px'] ?? ((int) ($cell['col_span'] ?? 1) * $cellWidth)) * $chartScale, $cellWidth * $chartScale);
+                                                        $height = max((float) ($cell['height_px'] ?? ((int) ($cell['row_span'] ?? 1) * $cellHeight)) * $chartScale, $cellHeight * $chartScale);
                                                     @endphp
-                                                    <div class="absolute overflow-hidden border px-1 py-0.5 leading-tight {{ $cellClass }}"
-                                                        style="left: {{ $left }}px; top: {{ $top }}px; width: {{ $width }}px; min-height: {{ $height }}px;">
+                                                    <div class="absolute z-10 overflow-hidden whitespace-normal break-words border px-1 py-0.5 {{ $cellClass }}"
+                                                        title="{{ $cell['text'] }}"
+                                                        style="left: {{ $left }}px; top: {{ $top }}px; width: {{ $width }}px; height: {{ $height }}px;">
                                                         {{ $cell['text'] }}
                                                     </div>
                                                 @endforeach

@@ -4,12 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\SiasnAbsensiLocationEmployee;
 use App\Services\SiasnEducationLocationSyncService;
+use App\Services\SiasnPnsExcelSyncService;
 use App\Services\SiasnProfileService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class SiasnProfileController extends Controller
 {
@@ -17,10 +19,9 @@ class SiasnProfileController extends Controller
 
     public function __construct(
         private readonly SiasnProfileService $service,
-        private readonly SiasnEducationLocationSyncService $educationSync
-    )
-    {
-    }
+        private readonly SiasnEducationLocationSyncService $educationSync,
+        private readonly SiasnPnsExcelSyncService $pnsExcelSync
+    ) {}
 
     public function index(Request $request): View
     {
@@ -67,7 +68,7 @@ class SiasnProfileController extends Controller
         } catch (\Throwable $exception) {
             $result = [
                 'success' => false,
-                'message' => 'Tes login SIASN gagal: ' . $exception->getMessage(),
+                'message' => 'Tes login SIASN gagal: '.$exception->getMessage(),
             ];
         }
 
@@ -148,7 +149,7 @@ class SiasnProfileController extends Controller
             } catch (\Throwable $exception) {
                 $result = [
                     'success' => false,
-                    'message' => 'Sinkron pegawai absensi gagal: ' . $exception->getMessage(),
+                    'message' => 'Sinkron pegawai absensi gagal: '.$exception->getMessage(),
                 ];
             }
         }
@@ -186,7 +187,7 @@ class SiasnProfileController extends Controller
                 ->with('siasn_result', [
                     'success' => false,
                     'message' => 'Pegawai absensi tidak ditemukan untuk sinkron SIASN.',
-            ]);
+                ]);
         }
 
         $sync = $this->syncAbsensiEmployeeWithSiasn($employee, $storedToken['token']);
@@ -240,6 +241,7 @@ class SiasnProfileController extends Controller
             $nip = preg_replace('/\D+/', '', (string) $employee->nip) ?? '';
             if (strlen($nip) !== 18) {
                 $skipped++;
+
                 continue;
             }
 
@@ -252,24 +254,24 @@ class SiasnProfileController extends Controller
             } else {
                 $failed++;
                 if (count($failedExamples) < 3) {
-                    $failedExamples[] = ($employee->nama ?: $employee->nip) . ': ' . $sync['error'];
+                    $failedExamples[] = ($employee->nama ?: $employee->nip).': '.$sync['error'];
                 }
             }
         }
 
         $message = 'Cek SIASN semua pegawai selesai. '
-            . $success . ' aktif tersinkron, '
-            . $notFound . ' ditandai PENSIUN/MUTASI, '
-            . $failed . ' gagal';
+            .$success.' aktif tersinkron, '
+            .$notFound.' ditandai PENSIUN/MUTASI, '
+            .$failed.' gagal';
 
         if ($skipped > 0) {
-            $message .= ', ' . $skipped . ' dilewati karena NIP tidak valid';
+            $message .= ', '.$skipped.' dilewati karena NIP tidak valid';
         }
 
-        $message .= ' dari ' . $checked . ' pegawai dicek.';
+        $message .= ' dari '.$checked.' pegawai dicek.';
 
         if ($failedExamples !== []) {
-            $message .= ' Contoh gagal: ' . implode('; ', $failedExamples) . '.';
+            $message .= ' Contoh gagal: '.implode('; ', $failedExamples).'.';
         }
 
         return redirect()
@@ -280,10 +282,28 @@ class SiasnProfileController extends Controller
             ]);
     }
 
+    public function syncPnsExcelSiasn(Request $request): RedirectResponse
+    {
+        try {
+            $reference = $this->educationUnitReference();
+            $result = $this->pnsExcelSync->sync($reference['rows']);
+        } catch (\Throwable $exception) {
+            $result = [
+                'success' => false,
+                'message' => 'Cek Data Excel ke SIASN gagal: '.$exception->getMessage(),
+            ];
+        }
+
+        return redirect()
+            ->route('cms.siasn.index')
+            ->with('siasn_result', $result);
+    }
+
     private function siasnView(Request $request, ?array $result = null): View
     {
         $educationUnitReference = $this->educationUnitReference();
         $educationUnits = $this->withAbsensiEmployees($educationUnitReference['rows']);
+        $educationUnits = $this->appendExcelOnlyUnits($educationUnits, $educationUnitReference['rows']);
 
         return view('absensi-cms.siasn', [
             'result' => $result ?? $request->session()->get('siasn_result'),
@@ -382,6 +402,7 @@ class SiasnProfileController extends Controller
                 $row['absensi_lokasi_nama'] = null;
                 $row['absensi_lokasi_id'] = null;
                 $row['siasn_unit_organisasi'] = '';
+                $row['toggle_key'] = $this->unitToggleKey((string) ($row['npsn'] ?? $row['unit_kerja'] ?? 'unit'));
             }
             unset($row);
 
@@ -405,14 +426,7 @@ class SiasnProfileController extends Controller
                 ->sortBy('nama')
                 ->values()
                 ->map(fn (SiasnAbsensiLocationEmployee $employee): array => [
-                    'nama' => (string) ($employee->nama ?? ''),
-                    'nip' => (string) $employee->nip,
-                    'lokasi_id' => (string) $employee->lokasi_id,
-                    'lokasi_nama' => (string) $employee->lokasi_nama,
-                    'siasn_unit_organisasi' => (string) ($employee->siasn_unit_organisasi ?? ''),
-                    'siasn_jabatan' => (string) ($employee->siasn_jabatan ?? ''),
-                    'status_asn' => $this->employeeAsnStatus($employee),
-                    'fetched_at' => $employee->fetched_at?->format('Y-m-d H:i:s'),
+                    ...$this->employeeDisplayPayload($employee),
                 ])
                 ->all();
 
@@ -420,6 +434,7 @@ class SiasnProfileController extends Controller
             $row['absensi_employee_count'] = count($employees);
             $row['absensi_lokasi_nama'] = $employees[0]['lokasi_nama'] ?? null;
             $row['absensi_lokasi_id'] = $employees[0]['lokasi_id'] ?? null;
+            $row['toggle_key'] = $this->unitToggleKey((string) ($row['npsn'] ?? $row['unit_kerja'] ?? 'unit'));
             $row['siasn_unit_organisasi'] = collect($employees)
                 ->pluck('siasn_unit_organisasi')
                 ->filter()
@@ -430,6 +445,108 @@ class SiasnProfileController extends Controller
         unset($row);
 
         return $rows;
+    }
+
+    private function appendExcelOnlyUnits(array $rows, array $referenceRows): array
+    {
+        if (! Schema::hasTable('siasn_absensi_location_employees')) {
+            return $rows;
+        }
+
+        $referenceNpsns = collect($referenceRows)
+            ->pluck('npsn')
+            ->map(fn ($value): string => (string) $value)
+            ->filter()
+            ->flip();
+
+        $employeeRows = SiasnAbsensiLocationEmployee::query()
+            ->with('siasnProfile')
+            ->where('skpd_id', 1)
+            ->where('match_status', 'lokasi_absensi_cocok')
+            ->latest('fetched_at')
+            ->get()
+            ->filter(function (SiasnAbsensiLocationEmployee $employee) use ($referenceNpsns): bool {
+                $rowData = is_array($employee->row_data) ? $employee->row_data : [];
+                $source = (string) ($rowData['excel_siasn_pns_source'] ?? '');
+                $referenceNpsn = (string) ($rowData['referensi_npsn'] ?? '');
+
+                return $source !== '' && ! $referenceNpsns->has($referenceNpsn);
+            });
+
+        $nextNo = count($rows) + 1;
+
+        foreach ($employeeRows->groupBy(function (SiasnAbsensiLocationEmployee $employee): string {
+            $rowData = is_array($employee->row_data) ? $employee->row_data : [];
+
+            return (string) ($rowData['referensi_npsn'] ?? ('excel:'.Str::slug((string) ($rowData['excel_siasn_unit_kerja'] ?? $employee->lokasi_nama))));
+        }) as $unitKey => $employees) {
+            $employees = $employees
+                ->unique(fn (SiasnAbsensiLocationEmployee $employee): string => (string) $employee->nip)
+                ->sortBy('nama')
+                ->values();
+            $first = $employees->first();
+            if (! $first instanceof SiasnAbsensiLocationEmployee) {
+                continue;
+            }
+
+            $firstRowData = is_array($first->row_data) ? $first->row_data : [];
+            $unitName = (string) (
+                $firstRowData['referensi_unit_kerja']
+                ?? $firstRowData['excel_siasn_unit_kerja']
+                ?? $first->lokasi_nama
+                ?? 'Unit Excel SIASN'
+            );
+            $employeePayloads = $employees
+                ->map(fn (SiasnAbsensiLocationEmployee $employee): array => $this->employeeDisplayPayload($employee))
+                ->all();
+
+            $rows[] = [
+                'no' => $nextNo++,
+                'jenjang' => 'Excel',
+                'bentuk' => 'Excel',
+                'npsn' => $unitKey,
+                'npsn_label' => 'Excel',
+                'unit_kerja' => $unitName,
+                'siasn_unit_organisasi' => collect($employeePayloads)
+                    ->pluck('siasn_unit_organisasi')
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->implode(', '),
+                'kecamatan' => '-',
+                'kelurahan' => '-',
+                'alamat' => 'Data dari Excel PNS',
+                'status' => 'Excel PNS',
+                'absensi_employees' => $employeePayloads,
+                'absensi_employee_count' => count($employeePayloads),
+                'absensi_lokasi_nama' => $unitName,
+                'absensi_lokasi_id' => (string) ($first->lokasi_id ?? ''),
+                'toggle_key' => $this->unitToggleKey($unitKey),
+            ];
+        }
+
+        return $rows;
+    }
+
+    private function employeeDisplayPayload(SiasnAbsensiLocationEmployee $employee): array
+    {
+        return [
+            'nama' => (string) ($employee->nama ?? ''),
+            'nip' => (string) $employee->nip,
+            'lokasi_id' => (string) $employee->lokasi_id,
+            'lokasi_nama' => (string) $employee->lokasi_nama,
+            'siasn_unit_organisasi' => (string) ($employee->siasn_unit_organisasi ?? ''),
+            'siasn_jabatan' => (string) ($employee->siasn_jabatan ?? ''),
+            'status_asn' => $this->employeeAsnStatus($employee),
+            'fetched_at' => $employee->fetched_at?->format('Y-m-d H:i:s'),
+        ];
+    }
+
+    private function unitToggleKey(string $value): string
+    {
+        $slug = Str::slug($value);
+
+        return $slug !== '' ? $slug : md5($value);
     }
 
     private function employeeAsnStatus(SiasnAbsensiLocationEmployee $employee): string
@@ -469,7 +586,7 @@ class SiasnProfileController extends Controller
                 'success' => true,
                 'not_found' => false,
                 'error' => null,
-                'message' => 'Sinkron SIASN berhasil untuk ' . ($employee->nama ?: $nip) . '.',
+                'message' => 'Sinkron SIASN berhasil untuk '.($employee->nama ?: $nip).'.',
             ];
         } catch (\Throwable $exception) {
             $rowData = is_array($employee->row_data) ? $employee->row_data : [];
@@ -495,8 +612,8 @@ class SiasnProfileController extends Controller
                 'not_found' => $notFound,
                 'error' => $exception->getMessage(),
                 'message' => $notFound
-                    ? 'Data SIASN tidak ditemukan untuk ' . ($employee->nama ?: $nip) . '; status ditandai PENSIUN/MUTASI.'
-                    : 'Sinkron SIASN gagal untuk ' . ($employee->nama ?: $nip) . ': ' . $exception->getMessage(),
+                    ? 'Data SIASN tidak ditemukan untuk '.($employee->nama ?: $nip).'; status ditandai PENSIUN/MUTASI.'
+                    : 'Sinkron SIASN gagal untuk '.($employee->nama ?: $nip).': '.$exception->getMessage(),
             ];
         }
     }
@@ -523,7 +640,7 @@ class SiasnProfileController extends Controller
     private function storeSiasnToken(Request $request, string $bearerToken): void
     {
         $info = $this->service->tokenInfo($bearerToken);
-        $identity = $info['nama'] ?: ($info['nip'] ? 'NIP ' . $info['nip'] : 'pengguna SIASN');
+        $identity = $info['nama'] ?: ($info['nip'] ? 'NIP '.$info['nip'] : 'pengguna SIASN');
 
         $request->session()->put([
             'siasn_token' => $info['token'],

@@ -166,6 +166,20 @@
                             </dl>
                         </div>
                     @endif
+
+                    @if (! empty($result['summary']) && is_array($result['summary']))
+                        <div class="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            @foreach ($result['summary'] as $label => $value)
+                                @continue(is_array($value))
+                                <div class="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
+                                    <div class="text-xs font-medium text-zinc-500">{{ \Illuminate\Support\Str::headline((string) $label) }}</div>
+                                    <div class="mt-1 text-sm font-semibold text-zinc-950">
+                                        {{ is_numeric($value) ? number_format((float) $value, 0, ',', '.') : ($value ?: '-') }}
+                                    </div>
+                                </div>
+                            @endforeach
+                        </div>
+                    @endif
                 @endif
 
                 @if ($storedToken)
@@ -255,6 +269,13 @@
                                             Cek Semua SIASN
                                         </button>
                                     </form>
+                                    <form method="POST" action="{{ route('cms.siasn.sync-pns-excel-siasn') }}" onsubmit="return confirm('Cek data Excel PNS ke SIASN lokal dan sesuaikan unit kerja?');">
+                                        @csrf
+                                        <button type="submit" class="inline-flex items-center justify-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100">
+                                            <i data-lucide="file-check-2" class="h-4 w-4"></i>
+                                            Cek Data Excel ke SIASN
+                                        </button>
+                                    </form>
                                 </div>
                             </div>
 
@@ -305,7 +326,8 @@
                             </thead>
                             <tbody class="divide-y divide-zinc-100 bg-white">
                                 @forelse ($educationUnits as $unit)
-                                    <tr class="cursor-pointer hover:bg-zinc-50" data-unit-toggle="unit-employees-{{ $unit['npsn'] ?? $loop->iteration }}" aria-expanded="false">
+                                    @php($unitToggleId = 'unit-employees-' . ($unit['toggle_key'] ?? \Illuminate\Support\Str::slug((string) ($unit['npsn'] ?? $loop->iteration))))
+                                    <tr class="cursor-pointer hover:bg-zinc-50" data-unit-toggle="{{ $unitToggleId }}" aria-expanded="false">
                                         <td class="whitespace-nowrap px-4 py-3 text-zinc-500">{{ $unit['no'] ?? $loop->iteration }}</td>
                                         <td class="whitespace-nowrap px-4 py-3">
                                             <span class="inline-flex rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-medium text-zinc-700">
@@ -314,9 +336,9 @@
                                         </td>
                                         <td class="whitespace-nowrap px-4 py-3 font-mono text-xs">
                                             @if (! empty($unit['source_url']))
-                                                <a href="{{ $unit['source_url'] }}" target="_blank" class="text-cyan-700 hover:text-cyan-800">{{ $unit['npsn'] ?? '-' }}</a>
+                                                <a href="{{ $unit['source_url'] }}" target="_blank" class="text-cyan-700 hover:text-cyan-800">{{ $unit['npsn_label'] ?? ($unit['npsn'] ?? '-') }}</a>
                                             @else
-                                                {{ $unit['npsn'] ?? '-' }}
+                                                {{ $unit['npsn_label'] ?? ($unit['npsn'] ?? '-') }}
                                             @endif
                                         </td>
                                         <td class="px-4 py-3 font-medium text-zinc-900">{{ $unit['unit_kerja'] ?? '-' }}</td>
@@ -339,7 +361,7 @@
                                         </td>
                                         <td class="whitespace-nowrap px-4 py-3 text-zinc-600">{{ $unit['status'] ?? '-' }}</td>
                                     </tr>
-                                    <tr id="unit-employees-{{ $unit['npsn'] ?? $loop->iteration }}" class="hidden bg-zinc-50">
+                                    <tr id="{{ $unitToggleId }}" class="hidden bg-zinc-50">
                                         <td colspan="10" class="px-4 py-4">
                                             <div class="rounded-md border border-zinc-200 bg-white p-4">
                                                 <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">

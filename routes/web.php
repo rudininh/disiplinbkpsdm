@@ -28,6 +28,7 @@ Route::prefix('cms')->name('cms.')->group(function () {
     Route::post('/siasn/sync-absensi-reference-employees', [SiasnProfileController::class, 'syncAbsensiReferenceEmployees'])->name('siasn.sync-absensi-reference-employees');
     Route::post('/siasn/sync-absensi-employee-siasn', [SiasnProfileController::class, 'syncAbsensiEmployeeSiasn'])->name('siasn.sync-absensi-employee-siasn');
     Route::post('/siasn/sync-all-absensi-employees-siasn', [SiasnProfileController::class, 'syncAllAbsensiEmployeesSiasn'])->name('siasn.sync-all-absensi-employees-siasn');
+    Route::post('/siasn/sync-pns-excel-siasn', [SiasnProfileController::class, 'syncPnsExcelSiasn'])->name('siasn.sync-pns-excel-siasn');
     Route::post('/siasn/sync-education-locations', [SiasnProfileController::class, 'syncEducationLocations'])->name('siasn.sync-education-locations');
     Route::get('/laporan-absensi-harian', [AbsensiCmsController::class, 'laporanAbsensiHarian'])->name('laporan-absensi-harian.index');
     Route::post('/laporan-absensi-harian/fetch', [AbsensiCmsController::class, 'fetchLaporanAbsensiHarian'])->name('laporan-absensi-harian.fetch');

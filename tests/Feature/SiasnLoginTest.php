@@ -9,6 +9,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Mockery\MockInterface;
 use Tests\TestCase;
+use ZipArchive;
 
 class SiasnLoginTest extends TestCase
 {
@@ -29,6 +30,7 @@ class SiasnLoginTest extends TestCase
             ->assertSeeText('Referensi Unit Kerja Dikdas')
             ->assertSeeText('Sinkron Pegawai Absensi')
             ->assertSeeText('Cek Semua SIASN')
+            ->assertSeeText('Cek Data Excel ke SIASN')
             ->assertSeeText('TK NEGERI PEMBINA BANJARMASIN TIMUR 2')
             ->assertSeeText('SD NEGERI ALALAK SELATAN 2')
             ->assertSeeText('SMP Negeri 35 Banjarmasin')
@@ -209,6 +211,50 @@ class SiasnLoginTest extends TestCase
         $this->assertNull($missing->siasn_pns_profile_id);
     }
 
+    public function test_can_sync_pns_excel_to_siasn_local_units(): void
+    {
+        config(['services.siasn.pns_excel_path' => $this->makePnsExcel([
+            ['NIP BARU', 'NAMA', 'GOL AKHIR NAMA', 'JENIS JABATAN NAMA', 'JABATAN NAMA', 'TMT JABATAN', 'UNOR (3)', 'UNOR (2)', 'UNOR (1)'],
+            ['199711282020121001', 'GURU TEST', 'III/a', 'Jabatan Fungsional', 'GURU AHLI PERTAMA', '01-02-2025', '', 'SD NEGERI PEKAPURAN RAYA 1', 'DINAS PENDIDIKAN'],
+            ['198001012000011001', 'PENGAWAS TEST', 'IV/a', 'Jabatan Fungsional', 'PENGAWAS SEKOLAH AHLI MADYA', '02-02-2025', '', '', 'DINAS PENDIDIKAN'],
+            ['197001012000011001', 'PENJAGA TEST', 'II/a', 'Jabatan Pelaksana', 'PENJAGA SEKOLAH', '03-02-2025', '', '', 'DINAS PENDIDIKAN'],
+            ['196001012000011001', 'ANALIS TEST', 'III/a', 'Jabatan Fungsional', 'ANALIS KEBIJAKAN AHLI MUDA', '04-02-2025', '', '', 'DINAS PENDIDIKAN'],
+        ])]);
+
+        $response = $this
+            ->followingRedirects()
+            ->post(route('cms.siasn.sync-pns-excel-siasn'));
+
+        $response
+            ->assertOk()
+            ->assertSeeText('Cek Data Excel ke SIASN selesai')
+            ->assertSeeText('3 pegawai diproses')
+            ->assertSeeText('GURU TEST')
+            ->assertSeeText('PENGAWAS TEST')
+            ->assertSeeText('PENJAGA TEST')
+            ->assertSeeText('DINAS PENDIDIKAN')
+            ->assertDontSeeText('ANALIS TEST');
+
+        $profile = SiasnPnsProfile::query()
+            ->where('nip', '199711282020121001')
+            ->firstOrFail();
+        $teacher = SiasnAbsensiLocationEmployee::query()
+            ->where('nip', '199711282020121001')
+            ->firstOrFail();
+        $supervisor = SiasnAbsensiLocationEmployee::query()
+            ->where('nip', '198001012000011001')
+            ->firstOrFail();
+
+        $this->assertSame('PNS', $profile->jenis_asn);
+        $this->assertSame('GURU AHLI PERTAMA', $profile->jabatan);
+        $this->assertSame('SD NEGERI PEKAPURAN RAYA 1', $teacher->siasn_unit_organisasi);
+        $this->assertSame('30304165', $teacher->row_data['referensi_npsn'] ?? null);
+        $this->assertSame('PENGAWAS SEKOLAH', $supervisor->row_data['excel_siasn_jabatan_kategori'] ?? null);
+        $this->assertStringStartsWith('excel:', $supervisor->row_data['referensi_npsn'] ?? '');
+        $this->assertLessThanOrEqual(64, strlen((string) $supervisor->lokasi_id));
+        $this->assertSame(3, SiasnAbsensiLocationEmployee::query()->count());
+    }
+
     public function test_siasn_login_test_rejects_otp_codes_before_calling_api(): void
     {
         $response = $this->followingRedirects()->post(route('cms.siasn.test-login'), [
@@ -247,7 +293,7 @@ class SiasnLoginTest extends TestCase
             'bearer_token' => implode("\n", [
                 'refresh_token "eyJrefresh.refresh.refresh"',
                 'sso_refresh_token "eyJsso.refresh.refresh"',
-                'token "' . $token . '"',
+                'token "'.$token.'"',
             ]),
         ]);
 
@@ -372,5 +418,71 @@ class SiasnLoginTest extends TestCase
         $response
             ->assertRedirect(route('cms.siasn.index'))
             ->assertSessionMissing('siasn_token');
+    }
+
+    private function makePnsExcel(array $rows): string
+    {
+        $path = storage_path('framework/testing/pns-test-'.str_replace('.', '', uniqid('', true)).'.xlsx');
+        if (! is_dir(dirname($path))) {
+            mkdir(dirname($path), 0777, true);
+        }
+
+        $zip = new ZipArchive;
+        $zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+        $zip->addFromString('xl/workbook.xml', <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+    <sheets>
+        <sheet name="Sheet1" sheetId="1" r:id="rId1"/>
+    </sheets>
+</workbook>
+XML);
+        $zip->addFromString('xl/_rels/workbook.xml.rels', <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>
+XML);
+        $zip->addFromString('xl/worksheets/sheet1.xml', $this->sheetXml($rows));
+        $zip->close();
+
+        return $path;
+    }
+
+    private function sheetXml(array $rows): string
+    {
+        $xml = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'];
+        $xml[] = '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
+        $xml[] = '<sheetData>';
+
+        foreach ($rows as $rowIndex => $row) {
+            $rowNumber = $rowIndex + 1;
+            $xml[] = '<row r="'.$rowNumber.'">';
+
+            foreach ($row as $columnIndex => $value) {
+                $reference = $this->excelColumn($columnIndex + 1).$rowNumber;
+                $xml[] = '<c r="'.$reference.'" t="inlineStr"><is><t>'.htmlspecialchars($value, ENT_XML1).'</t></is></c>';
+            }
+
+            $xml[] = '</row>';
+        }
+
+        $xml[] = '</sheetData>';
+        $xml[] = '</worksheet>';
+
+        return implode('', $xml);
+    }
+
+    private function excelColumn(int $number): string
+    {
+        $column = '';
+
+        while ($number > 0) {
+            $number--;
+            $column = chr(65 + ($number % 26)).$column;
+            $number = intdiv($number, 26);
+        }
+
+        return $column;
     }
 }

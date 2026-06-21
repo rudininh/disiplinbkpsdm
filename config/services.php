@@ -73,6 +73,10 @@ return [
         'peta_jabatan_excel_path' => env('TPP_PETA_JABATAN_EXCEL_PATH', 'C:/Users/RUDINI/Downloads/Lampiran Perubahan kedua dan ketiga gabung Peta Jabatan 2026.xlsx'),
     ],
 
+    'siasn' => [
+        'pns_excel_path' => env('SIASN_PNS_EXCEL_PATH', 'C:/Users/JACKDAW/Downloads/PNS - 27 JANUARI 2026 - Copy.xlsx'),
+    ],
+
     'ses' => [
         'key' => env('AWS_ACCESS_KEY_ID'),
         'secret' => env('AWS_SECRET_ACCESS_KEY'),

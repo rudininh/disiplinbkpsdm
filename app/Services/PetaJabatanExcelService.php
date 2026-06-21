@@ -77,14 +77,14 @@ class PetaJabatanExcelService
 
     private function readWorkbook(string $path): array
     {
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         $zip->open($path);
         $relationships = $this->xml($zip, 'xl/_rels/workbook.xml.rels');
         $relationshipMap = [];
 
         foreach ($relationships->Relationship as $relationship) {
             $attributes = $relationship->attributes();
-            $relationshipMap[(string) $attributes['Id']] = 'xl/' . ltrim((string) $attributes['Target'], '/');
+            $relationshipMap[(string) $attributes['Id']] = 'xl/'.ltrim((string) $attributes['Target'], '/');
         }
 
         $workbook = $this->xml($zip, 'xl/workbook.xml');
@@ -110,7 +110,7 @@ class PetaJabatanExcelService
                 'title' => $title,
                 'dimension' => (string) ($worksheet->dimension->attributes()['ref'] ?? ''),
                 'records' => $this->extractRecords($rows),
-                'grid' => $this->compactGrid($rows, $merges, (string) ($worksheet->dimension->attributes()['ref'] ?? '')),
+                'grid' => $this->compactGrid($rows, $merges, (string) ($worksheet->dimension->attributes()['ref'] ?? ''), $worksheet),
             ];
         }
 
@@ -232,7 +232,7 @@ class PetaJabatanExcelService
             $nip = preg_replace('/\D+/', '', (string) ($person['nip'] ?? '')) ?? '';
 
             if ($nip !== '') {
-                return 'nip:' . $nip;
+                return 'nip:'.$nip;
             }
 
             return implode('|', [
@@ -243,7 +243,7 @@ class PetaJabatanExcelService
             ]);
         }
 
-        return 'name:' . $this->jobKey((string) $person);
+        return 'name:'.$this->jobKey((string) $person);
     }
 
     private function personName(mixed $person): string
@@ -541,7 +541,7 @@ class PetaJabatanExcelService
             return $value;
         }
 
-        return 'Kepala ' . $value;
+        return 'Kepala '.$value;
     }
 
     private function isIgnoredCategoryLabel(string $value): bool
@@ -570,7 +570,7 @@ class PetaJabatanExcelService
         return null;
     }
 
-    private function compactGrid(array $rows, array $merges, string $dimension): array
+    private function compactGrid(array $rows, array $merges, string $dimension, \SimpleXMLElement $worksheet): array
     {
         $chartCells = [];
         $maxColumn = 0;
@@ -586,7 +586,7 @@ class PetaJabatanExcelService
                     continue;
                 }
 
-                $merge = $merges[$rowNumber . ':' . $column] ?? ['cols' => 1, 'rows' => 1];
+                $merge = $merges[$rowNumber.':'.$column] ?? ['cols' => 1, 'rows' => 1];
                 $chartCells[] = [
                     'row' => $rowNumber,
                     'col' => $column,
@@ -602,12 +602,615 @@ class PetaJabatanExcelService
         [$dimensionMaxColumn, $dimensionMaxRow] = $this->dimensionBounds($dimension);
         $maxColumn = max($maxColumn, $dimensionMaxColumn);
         $maxRow = max($maxRow, $dimensionMaxRow);
+        $maxColumn = min($maxColumn, 140);
+        $maxRow = min($maxRow, 180);
+        $layout = $this->sheetPixelLayout($worksheet, $maxColumn, $maxRow);
+        $chartCells = array_map(function (array $cell) use ($layout): array {
+            $column = (int) $cell['col'];
+            $row = (int) $cell['row'];
+            $colSpan = max((int) ($cell['col_span'] ?? 1), 1);
+            $rowSpan = max((int) ($cell['row_span'] ?? 1), 1);
+
+            return [
+                ...$cell,
+                'left_px' => $this->columnLeft($layout, $column),
+                'top_px' => $this->rowTop($layout, $row),
+                'width_px' => max($this->columnLeft($layout, $column + $colSpan) - $this->columnLeft($layout, $column), 1),
+                'height_px' => max($this->rowTop($layout, $row + $rowSpan) - $this->rowTop($layout, $row), 1),
+            ];
+        }, array_values(array_filter($chartCells, fn (array $cell): bool => $cell['col'] <= 140 && $cell['row'] <= 180)));
 
         return [
-            'max_col' => min($maxColumn, 140),
-            'max_row' => min($maxRow, 180),
-            'cells' => array_values(array_filter($chartCells, fn (array $cell): bool => $cell['col'] <= 140 && $cell['row'] <= 180)),
+            'max_col' => $maxColumn,
+            'max_row' => $maxRow,
+            'width_px' => $this->columnLeft($layout, $maxColumn + 1),
+            'height_px' => $this->rowTop($layout, $maxRow + 1),
+            'columns_px' => $layout['columns'],
+            'rows_px' => $layout['rows'],
+            'cells' => $chartCells,
+            'connectors' => $this->orgChartConnectors($chartCells),
         ];
+    }
+
+    private function sheetPixelLayout(\SimpleXMLElement $worksheet, int $maxColumn, int $maxRow): array
+    {
+        $defaultColumnWidth = (float) ($worksheet->sheetFormatPr->attributes()['defaultColWidth'] ?? 8.43);
+        $defaultRowHeight = (float) ($worksheet->sheetFormatPr->attributes()['defaultRowHeight'] ?? 15);
+        $columns = array_fill(1, $maxColumn, $this->excelColumnWidthToPixels($defaultColumnWidth));
+        $rows = array_fill(1, $maxRow, $this->excelRowHeightToPixels($defaultRowHeight));
+
+        foreach ($worksheet->cols->col ?? [] as $column) {
+            $attributes = $column->attributes();
+            $min = max((int) ($attributes['min'] ?? 1), 1);
+            $max = min((int) ($attributes['max'] ?? $min), $maxColumn);
+            $hidden = ((string) ($attributes['hidden'] ?? '0')) === '1';
+            $width = $hidden ? 0 : $this->excelColumnWidthToPixels((float) ($attributes['width'] ?? $defaultColumnWidth));
+
+            for ($index = $min; $index <= $max; $index++) {
+                $columns[$index] = $width;
+            }
+        }
+
+        foreach ($worksheet->sheetData->row as $row) {
+            $attributes = $row->attributes();
+            $rowNumber = (int) ($attributes['r'] ?? 0);
+            if ($rowNumber < 1 || $rowNumber > $maxRow) {
+                continue;
+            }
+
+            if (isset($attributes['ht'])) {
+                $rows[$rowNumber] = $this->excelRowHeightToPixels((float) $attributes['ht']);
+            }
+        }
+
+        return [
+            'columns' => $columns,
+            'rows' => $rows,
+            'column_offsets' => $this->pixelOffsets($columns),
+            'row_offsets' => $this->pixelOffsets($rows),
+        ];
+    }
+
+    private function excelColumnWidthToPixels(float $width): int
+    {
+        return max((int) round(($width * 7) + 5), 12);
+    }
+
+    private function excelRowHeightToPixels(float $height): int
+    {
+        return max((int) round($height * 96 / 72), 18);
+    }
+
+    private function pixelOffsets(array $sizes): array
+    {
+        $offsets = [1 => 0];
+        $running = 0;
+
+        foreach ($sizes as $index => $size) {
+            $running += (int) $size;
+            $offsets[(int) $index + 1] = $running;
+        }
+
+        return $offsets;
+    }
+
+    private function columnLeft(array $layout, int $column): int
+    {
+        return (int) ($layout['column_offsets'][$column] ?? end($layout['column_offsets']));
+    }
+
+    private function rowTop(array $layout, int $row): int
+    {
+        return (int) ($layout['row_offsets'][$row] ?? end($layout['row_offsets']));
+    }
+
+    private function orgChartConnectors(array $cells): array
+    {
+        $nodes = $this->orgChartNodes($cells);
+        $tables = $this->orgChartTables($cells);
+        $obstacles = array_map(fn (array $table): array => [
+            'key' => $table['key'],
+            'left' => (float) $table['left_x'] - 8,
+            'right' => (float) $table['right_x'] + 8,
+            'top' => (float) $table['top_y'] - 8,
+            'bottom' => (float) $table['bottom_y'] + 8,
+        ], $tables);
+        $rows = collect($nodes)
+            ->groupBy('row')
+            ->sortKeys()
+            ->values();
+        $connectors = [];
+
+        for ($index = 1; $index < $rows->count(); $index++) {
+            $parents = $rows[$index - 1]->values();
+            $children = $rows[$index]->values();
+
+            if ($parents->isEmpty() || $children->isEmpty()) {
+                continue;
+            }
+
+            $childrenByParent = [];
+            foreach ($children as $child) {
+                $parentIndex = $parents
+                    ->keys()
+                    ->sortBy(fn ($parentIndex): float => abs((float) $parents[$parentIndex]['center_x'] - (float) $child['center_x']))
+                    ->first();
+
+                if ($parentIndex === null) {
+                    continue;
+                }
+
+                $childrenByParent[(int) $parentIndex][] = $child;
+            }
+
+            foreach ($childrenByParent as $parentIndex => $assignedChildren) {
+                $parent = $parents[$parentIndex] ?? null;
+                if ($parent === null || $assignedChildren === []) {
+                    continue;
+                }
+
+                foreach ($assignedChildren as $child) {
+                    if ((float) $child['top_y'] <= (float) $parent['bottom_y']) {
+                        continue;
+                    }
+
+                    $connectors[] = $this->routedConnector(
+                        (float) $parent['center_x'],
+                        (float) $parent['bottom_y'],
+                        (float) $child['center_x'],
+                        max((float) $child['top_y'] - 7, (float) $parent['bottom_y'] + 8),
+                        $obstacles
+                    );
+                }
+            }
+        }
+
+        foreach ($tables as $table) {
+            $parent = $this->nearestTableParent($nodes, $table);
+
+            if ($parent === null) {
+                continue;
+            }
+
+            $tableObstacles = array_values(array_filter(
+                $obstacles,
+                fn (array $obstacle): bool => ($obstacle['key'] ?? null) !== ($table['key'] ?? null)
+            ));
+
+            $connectors[] = $this->routedConnector(
+                (float) $parent['center_x'],
+                (float) $parent['bottom_y'],
+                (float) $table['center_x'],
+                max((float) $table['top_y'] - 34, (float) $parent['bottom_y'] + 8),
+                $tableObstacles
+            );
+        }
+
+        return $connectors;
+    }
+
+    private function orgChartNodes(array $cells): array
+    {
+        $classCells = collect($cells)
+            ->where('kind', 'class')
+            ->values();
+        $nodes = [];
+
+        foreach ($cells as $cell) {
+            $kind = $cell['kind'] ?? 'text';
+            if (! in_array($kind, ['position', 'text'], true)) {
+                continue;
+            }
+
+            $left = (float) ($cell['left_px'] ?? 0);
+            $right = $left + (float) ($cell['width_px'] ?? 0);
+            $top = (float) ($cell['top_px'] ?? 0);
+            $height = (float) ($cell['height_px'] ?? 0);
+            $classCell = $classCells
+                ->filter(function (array $classCell) use ($cell, $left, $right): bool {
+                    $classLeft = (float) ($classCell['left_px'] ?? 0);
+                    $classRight = $classLeft + (float) ($classCell['width_px'] ?? 0);
+
+                    return (int) $classCell['row'] > (int) $cell['row']
+                        && (int) $classCell['row'] <= (int) $cell['row'] + 4
+                        && $classLeft < $right
+                        && $classRight > $left;
+                })
+                ->sortBy('row')
+                ->first();
+
+            if (! is_array($classCell) && $kind !== 'position') {
+                continue;
+            }
+
+            $bottom = is_array($classCell)
+                ? (float) ($classCell['top_px'] ?? 0) + (float) ($classCell['height_px'] ?? 0)
+                : $top + $height;
+
+            $nodes[] = [
+                'row' => (int) $cell['row'],
+                'col' => (int) $cell['col'],
+                'left_x' => $left,
+                'right_x' => $right,
+                'center_x' => $left + ((float) ($cell['width_px'] ?? 0) / 2),
+                'top_y' => $top,
+                'bottom_y' => $bottom,
+                'text' => (string) ($cell['text'] ?? ''),
+            ];
+        }
+
+        return $nodes;
+    }
+
+    private function orgChartTables(array $cells): array
+    {
+        $cellsByRow = collect($cells)->groupBy('row');
+        $tables = [];
+
+        foreach ($cells as $cell) {
+            if (($cell['kind'] ?? '') !== 'header' || ! $this->isJabatanHeader($cell['text'] ?? '')) {
+                continue;
+            }
+
+            $row = (int) $cell['row'];
+            $startColumn = (int) $cell['col'];
+            $rowCells = $cellsByRow->get($row, collect())->sortBy('col')->values();
+            $headerCells = [$cell];
+
+            foreach ($rowCells as $rowCell) {
+                $column = (int) ($rowCell['col'] ?? 0);
+
+                if ($column <= $startColumn || ($rowCell['kind'] ?? '') !== 'header') {
+                    continue;
+                }
+
+                if ($this->isJabatanHeader($rowCell['text'] ?? '')) {
+                    break;
+                }
+
+                if ($column > $startColumn + 8) {
+                    break;
+                }
+
+                $key = $this->headerKey($rowCell['text'] ?? '');
+
+                if (in_array($key, ['kelas', 'kls', 'b', 'k', '+/-', '-/+'], true)) {
+                    $headerCells[] = $rowCell;
+                }
+            }
+
+            $headerCells = collect($headerCells);
+            $headerKeys = $headerCells
+                ->map(fn (array $rowCell): string => $this->headerKey($rowCell['text'] ?? ''))
+                ->all();
+
+            if (! in_array('kelas', $headerKeys, true) && ! in_array('kls', $headerKeys, true)) {
+                continue;
+            }
+
+            if (! in_array('b', $headerKeys, true) || ! in_array('k', $headerKeys, true)) {
+                continue;
+            }
+
+            $endColumn = (int) $headerCells->max('col');
+            $left = (float) $cell['left_px'];
+            $right = (float) $headerCells
+                ->map(fn (array $headerCell): float => (float) ($headerCell['left_px'] ?? 0) + (float) ($headerCell['width_px'] ?? 0))
+                ->max();
+            $topRow = $row;
+            $topY = (float) ($cell['top_px'] ?? 0);
+            $captionCell = collect($cells)
+                ->filter(function (array $candidate) use ($row, $left, $right): bool {
+                    if (($candidate['kind'] ?? '') !== 'header') {
+                        return false;
+                    }
+
+                    $candidateRow = (int) ($candidate['row'] ?? 0);
+                    if ($candidateRow < $row - 2 || $candidateRow >= $row) {
+                        return false;
+                    }
+
+                    $candidateLeft = (float) ($candidate['left_px'] ?? 0);
+                    $candidateRight = $candidateLeft + (float) ($candidate['width_px'] ?? 0);
+                    $text = $this->headerKey($candidate['text'] ?? '');
+
+                    return $this->isJabatanHeader($candidate['text'] ?? '')
+                        && $text !== 'jabatan'
+                        && $candidateLeft < $right
+                        && $candidateRight > $left;
+                })
+                ->sortByDesc('row')
+                ->first();
+
+            if (is_array($captionCell)) {
+                $topRow = (int) $captionCell['row'];
+                $topY = (float) ($captionCell['top_px'] ?? $topY);
+                $left = min($left, (float) ($captionCell['left_px'] ?? $left));
+                $right = max($right, (float) ($captionCell['left_px'] ?? 0) + (float) ($captionCell['width_px'] ?? 0));
+            }
+
+            $nextPositionRow = collect($cells)
+                ->filter(function (array $candidate) use ($row, $left, $right): bool {
+                    if (($candidate['kind'] ?? '') !== 'position' || (int) ($candidate['row'] ?? 0) <= $row) {
+                        return false;
+                    }
+
+                    $candidateLeft = (float) ($candidate['left_px'] ?? 0);
+                    $candidateRight = $candidateLeft + (float) ($candidate['width_px'] ?? 0);
+
+                    return $candidateLeft < $right && $candidateRight > $left;
+                })
+                ->min('row');
+            $scanLimit = $nextPositionRow ? (int) $nextPositionRow - 1 : $row + 42;
+            $endRow = $row;
+            $blankRows = 0;
+
+            for ($scanRow = $row; $scanRow <= $scanLimit; $scanRow++) {
+                $hasContent = $cellsByRow
+                    ->get($scanRow, collect())
+                    ->contains(fn (array $candidate): bool => (int) ($candidate['col'] ?? 0) >= $startColumn
+                        && (int) ($candidate['col'] ?? 0) <= $endColumn
+                        && $this->normalizeText($candidate['text'] ?? '') !== '');
+
+                if ($hasContent) {
+                    $endRow = $scanRow;
+                    $blankRows = 0;
+
+                    continue;
+                }
+
+                if ($scanRow > $row) {
+                    $blankRows++;
+                }
+
+                if ($blankRows >= 4) {
+                    break;
+                }
+            }
+
+            $tableCells = collect($cells)
+                ->filter(fn (array $candidate): bool => (int) ($candidate['row'] ?? 0) >= $topRow
+                    && (int) ($candidate['row'] ?? 0) <= $endRow
+                    && (int) ($candidate['col'] ?? 0) >= $startColumn
+                    && (int) ($candidate['col'] ?? 0) <= $endColumn)
+                ->values();
+
+            $bottom = (float) $tableCells
+                ->map(fn (array $tableCell): float => (float) ($tableCell['top_px'] ?? 0) + (float) ($tableCell['height_px'] ?? 0))
+                ->max();
+
+            if ($bottom <= (float) ($cell['top_px'] ?? 0)) {
+                continue;
+            }
+
+            $tables[] = [
+                'key' => $row.':'.$startColumn,
+                'row' => $row,
+                'col' => $startColumn,
+                'left_x' => $left,
+                'right_x' => $right,
+                'center_x' => $left + (($right - $left) / 2),
+                'top_y' => $topY,
+                'bottom_y' => $bottom,
+            ];
+        }
+
+        return $tables;
+    }
+
+    private function nearestTableParent(array $nodes, array $table): ?array
+    {
+        $best = null;
+        $bestScore = null;
+        $tableWidth = max((float) $table['right_x'] - (float) $table['left_x'], 1);
+
+        foreach ($nodes as $node) {
+            $gap = (float) $table['top_y'] - (float) $node['bottom_y'];
+
+            if ($gap < 8 || $gap > 680) {
+                continue;
+            }
+
+            $nodeWidth = max((float) $node['right_x'] - (float) $node['left_x'], 1);
+            $dx = abs((float) $node['center_x'] - (float) $table['center_x']);
+            $maxDx = max($tableWidth * 1.15, $nodeWidth * 1.25, 260);
+
+            if ($dx > $maxDx) {
+                continue;
+            }
+
+            $score = $gap + ($dx * 0.35);
+
+            if ($bestScore === null || $score < $bestScore) {
+                $best = $node;
+                $bestScore = $score;
+            }
+        }
+
+        return $best;
+    }
+
+    private function routedConnector(float $startX, float $startY, float $endX, float $endY, array $obstacles): array
+    {
+        $points = $this->connectorPoints($startX, $startY, $endX, $endY, $obstacles);
+        $roundedPoints = array_map(fn (array $point): array => [
+            'x' => round((float) $point[0], 3),
+            'y' => round((float) $point[1], 3),
+        ], $points);
+        $busY = (float) ($roundedPoints[1]['y'] ?? (($startY + $endY) / 2));
+
+        return [
+            'parent_x' => round($startX, 3),
+            'parent_y' => round($startY, 3),
+            'bus_y' => round($busY, 3),
+            'min_x' => round(min($startX, $endX), 3),
+            'max_x' => round(max($startX, $endX), 3),
+            'children' => [[
+                'x' => round($endX, 3),
+                'y' => round($endY, 3),
+            ]],
+            'paths' => [[
+                'points' => $roundedPoints,
+            ]],
+        ];
+    }
+
+    private function connectorPoints(float $startX, float $startY, float $endX, float $endY, array $obstacles): array
+    {
+        if ($endY <= $startY + 8) {
+            return $this->compactConnectorPoints([[$startX, $startY], [$endX, $endY]]);
+        }
+
+        $busY = $this->safeConnectorBusY($startX, $startY, $endX, $endY, $obstacles);
+        $simple = $this->compactConnectorPoints([[$startX, $startY], [$startX, $busY], [$endX, $busY], [$endX, $endY]]);
+
+        if ($this->pathAvoidsObstacles($simple, $obstacles)) {
+            return $simple;
+        }
+
+        $blockers = $this->connectorBlockers($startX, $startY, $endX, $endY, $obstacles);
+
+        if ($blockers !== []) {
+            $topY = min($endY - 10, max($startY + 12, min(array_column($blockers, 'top')) - 12));
+            $bottomY = min($endY - 10, max($topY + 18, max(array_column($blockers, 'bottom')) + 12));
+            $leftX = min(array_column($blockers, 'left')) - 12;
+            $rightX = max(array_column($blockers, 'right')) + 12;
+            $candidates = [
+                $this->compactConnectorPoints([[$startX, $startY], [$startX, $topY], [$leftX, $topY], [$leftX, $bottomY], [$endX, $bottomY], [$endX, $endY]]),
+                $this->compactConnectorPoints([[$startX, $startY], [$startX, $topY], [$rightX, $topY], [$rightX, $bottomY], [$endX, $bottomY], [$endX, $endY]]),
+            ];
+            usort($candidates, function (array $left, array $right) use ($obstacles): int {
+                $leftHits = $this->pathObstacleHits($left, $obstacles);
+                $rightHits = $this->pathObstacleHits($right, $obstacles);
+
+                if ($leftHits !== $rightHits) {
+                    return $leftHits <=> $rightHits;
+                }
+
+                return $this->pathLength($left) <=> $this->pathLength($right);
+            });
+
+            return $candidates[0];
+        }
+
+        return $simple;
+    }
+
+    private function safeConnectorBusY(float $startX, float $startY, float $endX, float $endY, array $obstacles): float
+    {
+        $minY = $startY + 10;
+        $maxY = $endY - 10;
+
+        if ($maxY <= $minY) {
+            return ($startY + $endY) / 2;
+        }
+
+        $candidates = [($startY + $endY) / 2, $minY, $maxY];
+
+        foreach ($obstacles as $obstacle) {
+            $candidates[] = (float) $obstacle['top'] - 12;
+            $candidates[] = (float) $obstacle['bottom'] + 12;
+        }
+
+        $candidates = array_values(array_unique(array_map(
+            fn (float $candidate): float => min(max($candidate, $minY), $maxY),
+            $candidates
+        )));
+        usort($candidates, fn (float $left, float $right): int => abs($left - (($startY + $endY) / 2)) <=> abs($right - (($startY + $endY) / 2)));
+
+        foreach ($candidates as $candidate) {
+            $path = $this->compactConnectorPoints([[$startX, $startY], [$startX, $candidate], [$endX, $candidate], [$endX, $endY]]);
+
+            if ($this->pathAvoidsObstacles($path, $obstacles)) {
+                return $candidate;
+            }
+        }
+
+        return ($startY + $endY) / 2;
+    }
+
+    private function connectorBlockers(float $startX, float $startY, float $endX, float $endY, array $obstacles): array
+    {
+        $left = min($startX, $endX);
+        $right = max($startX, $endX);
+
+        return array_values(array_filter($obstacles, fn (array $obstacle): bool => (float) $obstacle['bottom'] > $startY
+            && (float) $obstacle['top'] < $endY
+            && (float) $obstacle['right'] >= $left
+            && (float) $obstacle['left'] <= $right));
+    }
+
+    private function pathAvoidsObstacles(array $points, array $obstacles): bool
+    {
+        return $this->pathObstacleHits($points, $obstacles) === 0;
+    }
+
+    private function pathObstacleHits(array $points, array $obstacles): int
+    {
+        $hits = 0;
+
+        for ($index = 1; $index < count($points); $index++) {
+            foreach ($obstacles as $obstacle) {
+                if ($this->segmentIntersectsObstacle($points[$index - 1], $points[$index], $obstacle)) {
+                    $hits++;
+                }
+            }
+        }
+
+        return $hits;
+    }
+
+    private function segmentIntersectsObstacle(array $start, array $end, array $obstacle): bool
+    {
+        $x1 = (float) $start[0];
+        $y1 = (float) $start[1];
+        $x2 = (float) $end[0];
+        $y2 = (float) $end[1];
+
+        if (abs($x1 - $x2) < 0.001) {
+            return $x1 > (float) $obstacle['left']
+                && $x1 < (float) $obstacle['right']
+                && max($y1, $y2) > (float) $obstacle['top']
+                && min($y1, $y2) < (float) $obstacle['bottom'];
+        }
+
+        if (abs($y1 - $y2) < 0.001) {
+            return $y1 > (float) $obstacle['top']
+                && $y1 < (float) $obstacle['bottom']
+                && max($x1, $x2) > (float) $obstacle['left']
+                && min($x1, $x2) < (float) $obstacle['right'];
+        }
+
+        return false;
+    }
+
+    private function compactConnectorPoints(array $points): array
+    {
+        $compacted = [];
+
+        foreach ($points as $point) {
+            $last = $compacted[count($compacted) - 1] ?? null;
+
+            if ($last !== null && abs((float) $last[0] - (float) $point[0]) < 0.001 && abs((float) $last[1] - (float) $point[1]) < 0.001) {
+                continue;
+            }
+
+            $compacted[] = $point;
+        }
+
+        return $compacted;
+    }
+
+    private function pathLength(array $points): float
+    {
+        $length = 0;
+
+        for ($index = 1; $index < count($points); $index++) {
+            $length += abs((float) $points[$index][0] - (float) $points[$index - 1][0]);
+            $length += abs((float) $points[$index][1] - (float) $points[$index - 1][1]);
+        }
+
+        return $length;
     }
 
     private function flattenTppPayload(?array $payload): array
@@ -813,7 +1416,7 @@ class PetaJabatanExcelService
 
     private function matchSkpd(array $sheet, array $skpdRows): ?array
     {
-        $haystack = $this->orgKey(($sheet['title'] ?? '') . ' ' . ($sheet['name'] ?? ''));
+        $haystack = $this->orgKey(($sheet['title'] ?? '').' '.($sheet['name'] ?? ''));
 
         if (str_contains($haystack, 'PUSKESMAS') || str_contains($haystack, 'RUMAH SAKIT') || str_contains($haystack, 'KESEHATAN')) {
             return $this->findSkpdContaining($skpdRows, 'KESEHATAN');
@@ -894,7 +1497,7 @@ class PetaJabatanExcelService
             [$startColumn, $startRow] = $this->cellPosition($start);
             [$endColumn, $endRow] = $this->cellPosition($end);
 
-            $merges[$startRow . ':' . $startColumn] = [
+            $merges[$startRow.':'.$startColumn] = [
                 'cols' => max($endColumn - $startColumn + 1, 1),
                 'rows' => max($endRow - $startRow + 1, 1),
             ];
