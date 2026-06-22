@@ -257,7 +257,7 @@ function toggleAll(open) {
 }
 
 async function boot() {
-  const response = await fetch('/data/tpp_peta_jabatan_real.json');
+  const response = await fetch('/data/static_peta_jabatan_real.json');
   if (!response.ok) {
     throw new Error(`Gagal memuat data: ${response.status}`);
   }

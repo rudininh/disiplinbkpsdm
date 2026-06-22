@@ -1,6 +1,6 @@
 # Peta Jabatan Static
 
-Versi statis untuk menampilkan `storage/scraping/tpp_peta_jabatan_real.json` di Vercel.
+Versi statis untuk menampilkan data gabungan peta jabatan TPP dan lowongan dari Excel di Vercel.
 
 ## Jalankan Lokal
 
@@ -28,8 +28,8 @@ Ganti password sebelum dipakai publik.
 
 ## Update Data
 
-Salin ulang data terbaru:
+Jalankan export dari root repo Laravel:
 
 ```powershell
-Copy-Item ..\storage\scraping\tpp_peta_jabatan_real.json .\data\tpp_peta_jabatan_real.json -Force
+php artisan peta-jabatan:export-static
 ```
