@@ -233,6 +233,7 @@ Artisan::command('peta-jabatan:export-static', function (TppScraperService $tppS
     };
 
     $excelVacancyMapBySkpd = [];
+    $siasnFunctionalMapBySkpd = [];
     foreach (($comparison['sheets'] ?? []) as $sheet) {
         $matchedSkpdId = $sheet['matched_skpd']['skpd_id'] ?? null;
 
@@ -241,6 +242,32 @@ Artisan::command('peta-jabatan:export-static', function (TppScraperService $tppS
         }
 
         foreach (($sheet['comparison_records'] ?? []) as $record) {
+            foreach (($record['people_details'] ?? []) as $detail) {
+                if (($detail['source'] ?? '') !== 'siasn') {
+                    continue;
+                }
+
+                $unit = trim((string) (($detail['unit_kerja'] ?? null) ?: ($detail['lokasi_nama'] ?? 'Unit Kerja SIASN')));
+                $unit = $unit !== '' ? $unit : 'Unit Kerja SIASN';
+                $unitKey = $jobKey($unit);
+                $job = trim((string) (($detail['record_jabatan'] ?? null) ?: ($record['jabatan'] ?? ($detail['jabatan'] ?? '-'))));
+                $job = $job !== '' ? $job : '-';
+                $groupKey = implode('|', [$unitKey, $jobKey($job), (string) ($record['kelas'] ?? '')]);
+                $personKey = preg_replace('/\D+/', '', (string) ($detail['nip'] ?? '')) ?: $jobKey(($detail['name'] ?? '') . ' ' . $unit . ' ' . $job);
+
+                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['unit'] = $unit;
+                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['kelas'] = $record['kelas'] ?? ($detail['record_kelas'] ?? null);
+                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['jabatan'] = $job;
+                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['sheet_name'] = $sheet['name'] ?? null;
+                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['people'][$personKey] = [
+                    'kelas' => $record['kelas'] ?? ($detail['record_kelas'] ?? null),
+                    'jabatan' => $detail['jabatan'] ?? $job,
+                    'pegawai' => $detail['name'] ?? $detail['display'] ?? '-',
+                    'nip' => $detail['nip'] ?? null,
+                    'status_asn' => $detail['status_asn'] ?? null,
+                ];
+            }
+
             $vacant = (int) ($record['vacant'] ?? 0);
 
             if ($vacant <= 0) {
@@ -278,11 +305,83 @@ Artisan::command('peta-jabatan:export-static', function (TppScraperService $tppS
         }
     }
 
+    $siasnFunctionalTreesBySkpd = collect($siasnFunctionalMapBySkpd)
+        ->map(function ($units) {
+            $unitNodes = collect($units)
+                ->sortBy('unit')
+                ->map(function ($unit) {
+                    $jobNodes = collect($unit['jobs'] ?? [])
+                        ->sortBy('jabatan')
+                        ->map(function ($job) {
+                            $people = collect($job['people'] ?? [])->sortBy('pegawai')->values();
+                            $count = $people->count();
+                            $personNodes = $people
+                                ->map(fn ($person) => [
+                                    'kelas' => $person['kelas'] ?? null,
+                                    'jabatan' => $person['jabatan'] ?? '-',
+                                    'pegawai' => implode(' | ', array_values(array_filter([
+                                        $person['pegawai'] ?? '-',
+                                        $person['nip'] ?? null,
+                                        $person['status_asn'] ?? null,
+                                    ]))),
+                                    'children' => [],
+                                    'callout_class' => 'info',
+                                    'source' => 'siasn_person',
+                                ])
+                                ->all();
+
+                            return [
+                                'kelas' => $job['kelas'] ?? null,
+                                'jabatan' => $job['jabatan'] ?? '-',
+                                'pegawai' => null,
+                                'children' => $personNodes,
+                                'callout_class' => 'info',
+                                'source' => 'siasn_group',
+                                'sheet_name' => $job['sheet_name'] ?? null,
+                                'bezetting' => $count,
+                                'kebutuhan' => $count,
+                                'selisih' => 0,
+                                'vacancy_count' => 0,
+                            ];
+                        })
+                        ->values()
+                        ->all();
+                    $count = collect($jobNodes)->sum(fn ($node) => (int) ($node['bezetting'] ?? 0));
+
+                    return [
+                        'kelas' => null,
+                        'jabatan' => $unit['unit'] ?? 'Unit Kerja SIASN',
+                        'pegawai' => number_format($count) . ' pegawai SIASN',
+                        'children' => $jobNodes,
+                        'callout_class' => 'functional',
+                        'source' => 'siasn_unit',
+                    ];
+                })
+                ->values()
+                ->all();
+            $count = collect($unitNodes)->sum(function ($unitNode) {
+                return collect($unitNode['children'] ?? [])->sum(fn ($node) => (int) ($node['bezetting'] ?? 0));
+            });
+
+            return [[
+                'kelas' => null,
+                'jabatan' => 'Jabatan Fungsional',
+                'pegawai' => number_format($count) . ' pegawai SIASN',
+                'children' => $unitNodes,
+                'callout_class' => 'functional',
+                'source' => 'category',
+            ]];
+        })
+        ->all();
+
     foreach ($skpdRows as &$skpd) {
         $vacancyNodes = array_values($excelVacancyMapBySkpd[(string) ($skpd['skpd_id'] ?? '')] ?? []);
         $realTree = $compactEmptyTppNodes(is_array($skpd['tree'] ?? null) ? $skpd['tree'] : []);
+        $realTree = array_values([...$realTree, ...($siasnFunctionalTreesBySkpd[(string) ($skpd['skpd_id'] ?? '')] ?? [])]);
         $skpd['tree'] = $appendVacancies($realTree, $vacancyNodes);
         $skpd['vacancy_count'] = collect($vacancyNodes)->sum(fn ($node) => (int) ($node['vacancy_count'] ?? 0));
+        $skpd['siasn_functional_count'] = collect($siasnFunctionalTreesBySkpd[(string) ($skpd['skpd_id'] ?? '')] ?? [])
+            ->sum(fn ($node) => (int) filter_var((string) ($node['pegawai'] ?? '0'), FILTER_SANITIZE_NUMBER_INT));
     }
     unset($skpd);
 
