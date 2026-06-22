@@ -3,81 +3,84 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Peta Jabatan BKPSDM</title>
+    <title>Peta Jabatan Real - Disiplin BKPSDM</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <span class="brand-mark">PJ</span>
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <h1>Peta Jabatan Real</h1>
+          <p>Data struktur jabatan real dari portal TPP untuk seluruh SKPD.</p>
+        </div>
+        <div class="header-actions">
+          <span class="data-chip">storage/scraping/tpp_peta_jabatan_real.json</span>
+        </div>
+      </header>
+
+      <section class="content">
+        <div id="status-card" class="status-card">
           <div>
-            <p class="eyebrow">BKPSDM</p>
-            <h1>Peta Jabatan</h1>
+            <p class="eyebrow">Status Data</p>
+            <h2 id="status-title">Memuat data peta jabatan</h2>
+            <p id="status-message">Menyiapkan tampilan statis.</p>
+          </div>
+          <div class="status-meta">
+            <span id="last-sync">-</span>
           </div>
         </div>
 
-        <label class="field-label" for="skpd-search">Cari SKPD</label>
-        <input id="skpd-search" class="input" type="search" autocomplete="off" placeholder="Nama atau kode SKPD">
-
-        <nav id="skpd-list" class="skpd-list" aria-label="Daftar SKPD"></nav>
-      </aside>
-
-      <main class="content">
-        <header class="topbar">
-          <div>
-            <p id="last-sync" class="eyebrow">Memuat data</p>
-            <h2 id="page-title">Peta Jabatan</h2>
-          </div>
-          <div class="toolbar">
-            <button id="expand-all" class="icon-button" type="button" title="Buka semua" aria-label="Buka semua">
-              <span aria-hidden="true">+</span>
-            </button>
-            <button id="collapse-all" class="icon-button" type="button" title="Tutup semua" aria-label="Tutup semua">
-              <span aria-hidden="true">-</span>
-            </button>
-          </div>
-        </header>
-
-        <section class="summary-grid" aria-label="Ringkasan">
-          <div class="metric">
+        <section class="stats-grid" aria-label="Ringkasan peta jabatan">
+          <div class="stat-card">
             <span>Total SKPD</span>
             <strong id="metric-skpd">0</strong>
           </div>
-          <div class="metric">
+          <div class="stat-card">
+            <span>Berhasil</span>
+            <strong id="metric-success">0</strong>
+          </div>
+          <div class="stat-card">
+            <span>Gagal</span>
+            <strong id="metric-failed">0</strong>
+          </div>
+          <div class="stat-card">
             <span>Total Jabatan</span>
             <strong id="metric-jabatan">0</strong>
           </div>
-          <div class="metric">
-            <span>ASN</span>
-            <strong id="metric-asn">0</strong>
+        </section>
+
+        <div class="tabs" role="tablist" aria-label="Mode tampilan">
+          <button class="tab is-active" type="button">Tree Chart Real</button>
+          <button class="tab" type="button" disabled>Org Chart Excel</button>
+        </div>
+
+        <section class="filter-card">
+          <div>
+            <h2>Filter Tree Chart</h2>
+            <p>Pilih satu SKPD untuk fokus ke struktur tertentu, atau tampilkan semua SKPD sekaligus.</p>
           </div>
-          <div class="metric">
-            <span>Terpilih</span>
-            <strong id="metric-selected">-</strong>
+          <label>
+            <span>SKPD</span>
+            <select id="skpd-select"></select>
+          </label>
+          <button id="show-button" class="primary-button" type="button">Tampilkan</button>
+        </section>
+
+        <section class="search-row" aria-label="Pencarian jabatan">
+          <label>
+            <span>Cari jabatan atau pegawai</span>
+            <input id="tree-search" type="search" autocomplete="off" placeholder="Ketik nama jabatan atau pegawai">
+          </label>
+          <div class="tree-actions">
+            <button id="expand-all" class="secondary-button" type="button">Buka Semua</button>
+            <button id="collapse-all" class="secondary-button" type="button">Tutup Semua</button>
           </div>
         </section>
 
-        <section class="workbench">
-          <div class="filters">
-            <div>
-              <label class="field-label" for="tree-search">Cari jabatan atau pegawai</label>
-              <input id="tree-search" class="input" type="search" autocomplete="off" placeholder="Ketik nama jabatan atau pegawai">
-            </div>
-            <select id="depth-filter" class="select" aria-label="Filter level">
-              <option value="all">Semua level</option>
-              <option value="0">Level 0</option>
-              <option value="1">Level 1</option>
-              <option value="2">Level 2</option>
-              <option value="3">Level 3+</option>
-            </select>
-          </div>
-
-          <div id="empty-state" class="empty-state" hidden>Data tidak ditemukan.</div>
-          <div id="tree-root" class="tree-root" aria-live="polite"></div>
-        </section>
-      </main>
-    </div>
+        <div id="tree-container" class="tree-stack" aria-live="polite"></div>
+        <div id="empty-state" class="empty-state" hidden>Tidak ada data untuk pilihan SKPD ini.</div>
+      </section>
+    </main>
 
     <script src="/app.js" type="module"></script>
   </body>

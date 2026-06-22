@@ -1,27 +1,26 @@
 const state = {
   payload: null,
   skpd: [],
-  selectedIndex: 0,
-  skpdQuery: '',
-  treeQuery: '',
-  depth: 'all',
+  selectedKey: 'all',
+  pendingKey: 'all',
+  query: '',
 };
 
 const elements = {
+  statusTitle: document.querySelector('#status-title'),
+  statusMessage: document.querySelector('#status-message'),
   lastSync: document.querySelector('#last-sync'),
-  pageTitle: document.querySelector('#page-title'),
-  skpdSearch: document.querySelector('#skpd-search'),
-  skpdList: document.querySelector('#skpd-list'),
+  metricSkpd: document.querySelector('#metric-skpd'),
+  metricSuccess: document.querySelector('#metric-success'),
+  metricFailed: document.querySelector('#metric-failed'),
+  metricJabatan: document.querySelector('#metric-jabatan'),
+  skpdSelect: document.querySelector('#skpd-select'),
+  showButton: document.querySelector('#show-button'),
   treeSearch: document.querySelector('#tree-search'),
-  depthFilter: document.querySelector('#depth-filter'),
-  treeRoot: document.querySelector('#tree-root'),
+  treeContainer: document.querySelector('#tree-container'),
   emptyState: document.querySelector('#empty-state'),
   expandAll: document.querySelector('#expand-all'),
   collapseAll: document.querySelector('#collapse-all'),
-  metricSkpd: document.querySelector('#metric-skpd'),
-  metricJabatan: document.querySelector('#metric-jabatan'),
-  metricAsn: document.querySelector('#metric-asn'),
-  metricSelected: document.querySelector('#metric-selected'),
 };
 
 const formatter = new Intl.NumberFormat('id-ID');
@@ -47,9 +46,9 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
-function highlight(value, query) {
+function highlight(value) {
   const text = escapeHtml(value || '-');
-  const needle = query.trim();
+  const needle = state.query.trim();
   if (!needle) {
     return text;
   }
@@ -58,25 +57,29 @@ function highlight(value, query) {
   return text.replace(new RegExp(`(${escapedNeedle})`, 'ig'), '<mark>$1</mark>');
 }
 
-function matchesDepth(node) {
-  if (state.depth === 'all') {
-    return true;
+function selectedRows() {
+  if (state.selectedKey === 'all') {
+    return state.skpd;
   }
 
-  const depth = Number(node.depth || 0);
-  return state.depth === '3' ? depth >= 3 : depth === Number(state.depth);
+  if (state.selectedKey.startsWith('skpd:')) {
+    const id = state.selectedKey.slice(5);
+    return state.skpd.filter((item) => String(item.skpd_id || '') === id);
+  }
+
+  const index = state.selectedKey.slice(6);
+  return state.skpd.filter((item) => String(item.index || '') === index);
 }
 
 function filterTree(nodes) {
-  const query = normalize(state.treeQuery);
+  const query = normalize(state.query);
 
   return nodes.reduce((result, node) => {
     const filteredChildren = filterTree(childrenOf(node));
-    const haystack = normalize(`${node.jabatan || ''} ${node.pegawai || ''} ${node.kelas || ''}`);
-    const queryMatch = !query || haystack.includes(query);
-    const depthMatch = matchesDepth(node);
+    const haystack = normalize(`${node.kelas || ''} ${node.jabatan || ''} ${node.pegawai || ''}`);
+    const isMatch = !query || haystack.includes(query);
 
-    if ((queryMatch && depthMatch) || filteredChildren.length > 0) {
+    if (isMatch || filteredChildren.length > 0) {
       result.push({ ...node, children: filteredChildren });
     }
 
@@ -84,35 +87,65 @@ function filterTree(nodes) {
   }, []);
 }
 
-function filteredSkpd() {
-  const query = normalize(state.skpdQuery);
-  if (!query) {
-    return state.skpd;
+function isCategory(node) {
+  const source = node.source || 'tpp';
+  return source === 'category' || node.callout_class === 'functional';
+}
+
+function isSiasnGroup(node) {
+  return node.source === 'siasn_group';
+}
+
+function isFilled(node) {
+  const person = String(node.pegawai || '').trim();
+  return (person !== '' && person !== '-') || isSiasnGroup(node);
+}
+
+function nodeTone(node) {
+  if (isCategory(node)) {
+    return 'is-category';
   }
 
-  return state.skpd.filter((item) => normalize(`${item.kode || ''} ${item.nama || ''}`).includes(query));
+  return isFilled(node) ? '' : 'is-empty';
 }
 
-function renderSkpdList() {
-  const items = filteredSkpd();
+function statusText(node) {
+  if (isCategory(node)) {
+    return 'Kategori';
+  }
 
-  elements.skpdList.innerHTML = items.map((item) => {
-    const active = item.index === state.selectedIndex ? ' is-active' : '';
-    const count = item.jabatan_count ?? item.peta_jabatan_count ?? countNodes(item.tree || []);
+  if (isFilled(node)) {
+    return 'Terisi';
+  }
 
-    return `
-      <button class="skpd-button${active}" type="button" data-index="${escapeHtml(item.index)}">
-        <span>
-          <span class="skpd-name">${highlight(item.nama, state.skpdQuery)}</span>
-          <span class="skpd-code">${highlight(item.kode || '-', state.skpdQuery)}</span>
-        </span>
-        <span class="skpd-count">${formatter.format(count)}</span>
-      </button>
-    `;
-  }).join('');
+  const vacancyCount = Number(node.vacancy_count || 1);
+  return `Ada ${formatter.format(vacancyCount)} Jabatan Lowong`;
 }
 
-function renderTree(nodes, query) {
+function extraText(node) {
+  const person = String(node.pegawai || '').trim();
+  const source = node.source || 'tpp';
+
+  if (isSiasnGroup(node)) {
+    return `B ${formatter.format(Number(node.bezetting || 0))} pegawai SIASN`;
+  }
+
+  if (isFilled(node) && !isCategory(node)) {
+    return person;
+  }
+
+  if (isCategory(node) && person) {
+    return person;
+  }
+
+  if (['excel', 'tpp_empty', 'excel_parent'].includes(source)) {
+    return `B ${node.bezting || node.bezetting || 0} pegawai terisi / K ${node.kebutuhan || 0} kebutuhan / +/- ${node.selisih ?? '-'} kekurangan`;
+  }
+
+  return '';
+}
+
+function renderTree(nodes) {
   if (nodes.length === 0) {
     return '';
   }
@@ -121,28 +154,33 @@ function renderTree(nodes, query) {
     <ul class="tree-list">
       ${nodes.map((node) => {
         const children = childrenOf(node);
-        const level = Math.min(Number(node.depth || 0), 3);
-        const closedClass = children.length > 0 ? '' : ' is-closed';
-        const childMarkup = children.length > 0
-          ? `<div class="node-children">${renderTree(children, query)}</div>`
-          : '';
+        const tone = nodeTone(node);
+        const category = isCategory(node);
+        const hasChildren = children.length > 0;
+        const extra = extraText(node);
 
         return `
           <li class="tree-item">
-            <article class="node level-${level}${closedClass}">
-              <button class="node-toggle" type="button" ${children.length === 0 ? 'disabled' : ''}>
-                <span class="node-arrow" aria-hidden="true">${children.length > 0 ? 'v' : '-'}</span>
-                <span>
-                  <span class="node-title">${highlight(node.jabatan, query)}</span>
-                  <span class="node-person">${highlight(node.pegawai || 'Kosong', query)}</span>
+            <span class="tree-dot ${tone}"></span>
+            <div class="node-card ${tone}">
+              <button class="node-button" type="button" ${hasChildren ? '' : 'disabled'}>
+                <span class="node-main">
+                  <span class="kelas">${highlight(node.kelas ?? '-')}</span>
+                  <span class="separator">|</span>
+                  <span class="job">${highlight(node.jabatan ?? '-')}</span>
+                  ${extra ? `
+                    <span class="separator">|</span>
+                    <span class="${category ? 'category-text' : tone === 'is-empty' ? 'vacant-text' : 'person'}">${highlight(extra)}</span>
+                  ` : ''}
+                  ${node.sheet_name ? `
+                    <span class="separator">|</span>
+                    <span class="person">${highlight(node.sheet_name)}</span>
+                  ` : ''}
                 </span>
-                <span class="node-meta">
-                  <span class="pill">K${escapeHtml(node.kelas || '-')}</span>
-                  <span class="pill">L${escapeHtml(node.depth ?? 0)}</span>
-                </span>
+                <span class="node-status ${tone}">${escapeHtml(statusText(node))}</span>
               </button>
-              ${childMarkup}
-            </article>
+              ${hasChildren ? `<div class="node-children">${renderTree(children)}</div>` : ''}
+            </div>
           </li>
         `;
       }).join('')}
@@ -150,38 +188,70 @@ function renderTree(nodes, query) {
   `;
 }
 
-function selectedSkpd() {
-  return state.skpd.find((item) => item.index === state.selectedIndex) || state.skpd[0];
+function renderOptions() {
+  elements.skpdSelect.innerHTML = [
+    '<option value="all">Semua SKPD</option>',
+    ...state.skpd.map((item) => {
+      const value = item.skpd_id ? `skpd:${item.skpd_id}` : `index:${item.index || ''}`;
+      const label = `${item.kode || '-'} - ${item.nama || 'SKPD tanpa nama'}`;
+      return `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
+    }),
+  ].join('');
+  elements.skpdSelect.value = state.pendingKey;
 }
 
-function renderSummary(item) {
+function renderStats() {
+  const successCount = state.skpd.filter((item) => item.success === true).length;
+  const failedCount = state.skpd.filter((item) => item.success === false).length;
   const totalJabatan = state.payload?.meta?.total_jabatan
-    ?? state.skpd.reduce((total, skpd) => total + Number(skpd.jabatan_count || skpd.peta_jabatan_count || 0), 0);
-  const totalAsn = state.skpd.reduce((total, skpd) => total + Number(skpd.asn_count || 0), 0);
-  const selectedCount = item?.jabatan_count ?? item?.peta_jabatan_count ?? countNodes(item?.tree || []);
+    ?? state.skpd.reduce((total, item) => total + Number(item.jabatan_count || 0), 0);
 
   elements.metricSkpd.textContent = formatter.format(state.skpd.length);
+  elements.metricSuccess.textContent = formatter.format(successCount);
+  elements.metricFailed.textContent = formatter.format(failedCount);
   elements.metricJabatan.textContent = formatter.format(totalJabatan);
-  elements.metricAsn.textContent = formatter.format(totalAsn);
-  elements.metricSelected.textContent = formatter.format(selectedCount);
 }
 
-function renderMain() {
-  const item = selectedSkpd();
-  if (!item) {
-    return;
-  }
+function renderCards() {
+  const rows = selectedRows();
+  const markup = rows.map((item) => {
+    const filtered = filterTree(Array.isArray(item.tree) ? item.tree : []);
+    const count = item.jabatan_count ?? item.peta_jabatan_count ?? countNodes(item.tree || []);
 
-  const nodes = filterTree(item.tree || []);
-  elements.pageTitle.textContent = item.nama || 'Peta Jabatan';
-  elements.treeRoot.innerHTML = renderTree(nodes, state.treeQuery);
-  elements.emptyState.hidden = nodes.length > 0;
-  renderSummary(item);
-  renderSkpdList();
+    return `
+      <article class="skpd-card">
+        <div class="skpd-heading">
+          <div>
+            <h2>${escapeHtml(item.nama || 'SKPD tanpa nama')}</h2>
+            <p>Kode SKPD: ${escapeHtml(item.kode || '-')} | ID login: ${escapeHtml(item.skpd_id || '-')}</p>
+          </div>
+          <div class="skpd-badges">
+            <span>ASN ${formatter.format(Number(item.asn_count || 0))}</span>
+            <span>Jabatan ${formatter.format(Number(count || 0))}</span>
+          </div>
+        </div>
+        <div class="skpd-body">
+          ${item.success === false
+            ? `<div class="empty-state">${escapeHtml(item.message || 'Data SKPD ini belum berhasil diambil.')}</div>`
+            : filtered.length > 0
+              ? renderTree(filtered)
+              : '<div class="empty-state">Tidak ada struktur jabatan pada halaman ini.</div>'}
+        </div>
+      </article>
+    `;
+  }).join('');
+
+  elements.treeContainer.innerHTML = markup;
+  elements.emptyState.hidden = rows.length > 0;
+}
+
+function render() {
+  renderStats();
+  renderCards();
 }
 
 function toggleAll(open) {
-  document.querySelectorAll('.node').forEach((node) => {
+  document.querySelectorAll('.node-card').forEach((node) => {
     node.classList.toggle('is-closed', !open);
   });
 }
@@ -194,53 +264,45 @@ async function boot() {
 
   state.payload = await response.json();
   state.skpd = Array.isArray(state.payload.skpd) ? state.payload.skpd : [];
-  state.selectedIndex = state.skpd[0]?.index || 0;
 
-  const fetchedAt = state.payload?.meta?.fetched_at || '-';
-  elements.lastSync.textContent = `Sinkron ${fetchedAt}`;
+  const meta = state.payload.meta || {};
+  elements.statusTitle.textContent = state.payload.message || 'Data Peta Jabatan Real berhasil dimuat.';
+  elements.statusMessage.textContent = `${formatter.format(Number(meta.success_count || 0))} SKPD berhasil, ${formatter.format(Number(meta.failed_count || 0))} gagal.`;
+  elements.lastSync.textContent = `Sinkron ${meta.fetched_at || '-'}`;
 
-  renderMain();
+  renderOptions();
+  render();
 }
 
-elements.skpdSearch.addEventListener('input', (event) => {
-  state.skpdQuery = event.target.value;
-  renderSkpdList();
+elements.skpdSelect.addEventListener('change', (event) => {
+  state.pendingKey = event.target.value;
 });
 
-elements.skpdList.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-index]');
-  if (!button) {
-    return;
-  }
-
-  state.selectedIndex = Number(button.dataset.index);
-  renderMain();
+elements.showButton.addEventListener('click', () => {
+  state.selectedKey = state.pendingKey;
+  renderCards();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
 elements.treeSearch.addEventListener('input', (event) => {
-  state.treeQuery = event.target.value;
-  renderMain();
+  state.query = event.target.value;
+  renderCards();
 });
 
-elements.depthFilter.addEventListener('change', (event) => {
-  state.depth = event.target.value;
-  renderMain();
-});
-
-elements.treeRoot.addEventListener('click', (event) => {
-  const button = event.target.closest('.node-toggle');
+elements.treeContainer.addEventListener('click', (event) => {
+  const button = event.target.closest('.node-button');
   if (!button || button.disabled) {
     return;
   }
 
-  button.closest('.node')?.classList.toggle('is-closed');
+  button.closest('.node-card')?.classList.toggle('is-closed');
 });
 
 elements.expandAll.addEventListener('click', () => toggleAll(true));
 elements.collapseAll.addEventListener('click', () => toggleAll(false));
 
 boot().catch((error) => {
-  elements.lastSync.textContent = 'Data gagal dimuat';
+  elements.statusTitle.textContent = 'Data gagal dimuat';
+  elements.statusMessage.textContent = error.message;
   elements.emptyState.hidden = false;
-  elements.emptyState.textContent = error.message;
 });
