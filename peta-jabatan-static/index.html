@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Peta Jabatan BKPSDM</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">PJ</span>
+          <div>
+            <p class="eyebrow">BKPSDM</p>
+            <h1>Peta Jabatan</h1>
+          </div>
+        </div>
+
+        <label class="field-label" for="skpd-search">Cari SKPD</label>
+        <input id="skpd-search" class="input" type="search" autocomplete="off" placeholder="Nama atau kode SKPD">
+
+        <nav id="skpd-list" class="skpd-list" aria-label="Daftar SKPD"></nav>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <p id="last-sync" class="eyebrow">Memuat data</p>
+            <h2 id="page-title">Peta Jabatan</h2>
+          </div>
+          <div class="toolbar">
+            <button id="expand-all" class="icon-button" type="button" title="Buka semua" aria-label="Buka semua">
+              <span aria-hidden="true">+</span>
+            </button>
+            <button id="collapse-all" class="icon-button" type="button" title="Tutup semua" aria-label="Tutup semua">
+              <span aria-hidden="true">-</span>
+            </button>
+          </div>
+        </header>
+
+        <section class="summary-grid" aria-label="Ringkasan">
+          <div class="metric">
+            <span>Total SKPD</span>
+            <strong id="metric-skpd">0</strong>
+          </div>
+          <div class="metric">
+            <span>Total Jabatan</span>
+            <strong id="metric-jabatan">0</strong>
+          </div>
+          <div class="metric">
+            <span>ASN</span>
+            <strong id="metric-asn">0</strong>
+          </div>
+          <div class="metric">
+            <span>Terpilih</span>
+            <strong id="metric-selected">-</strong>
+          </div>
+        </section>
+
+        <section class="workbench">
+          <div class="filters">
+            <div>
+              <label class="field-label" for="tree-search">Cari jabatan atau pegawai</label>
+              <input id="tree-search" class="input" type="search" autocomplete="off" placeholder="Ketik nama jabatan atau pegawai">
+            </div>
+            <select id="depth-filter" class="select" aria-label="Filter level">
+              <option value="all">Semua level</option>
+              <option value="0">Level 0</option>
+              <option value="1">Level 1</option>
+              <option value="2">Level 2</option>
+              <option value="3">Level 3+</option>
+            </select>
+          </div>
+
+          <div id="empty-state" class="empty-state" hidden>Data tidak ditemukan.</div>
+          <div id="tree-root" class="tree-root" aria-live="polite"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

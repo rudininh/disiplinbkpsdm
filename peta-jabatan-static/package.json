@@ -1,0 +1,14 @@
+{
+  "name": "peta-jabatan-static",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx vercel dev",
+    "start": "npx serve .",
+    "build": "node -e \"console.log('Static build: no compile step required')\""
+  },
+  "devDependencies": {
+    "@vercel/functions": "^3.7.2",
+    "serve": "^14.2.5"
+  }
+}
