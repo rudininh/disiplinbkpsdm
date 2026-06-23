@@ -236,12 +236,13 @@ class AbsensiCmsController extends Controller
     {
         $payload = $this->tppScraper->latestPetaJabatanReal();
         $viewMode = (string) $request->input('view', 'tree');
+        $viewMode = in_array($viewMode, ['tree', 'org'], true) ? $viewMode : 'tree';
         $selectedSheet = $request->filled('sheet') ? (int) $request->input('sheet') : 0;
 
         return view('absensi-cms.peta-jabatan-real', [
             'payload' => $payload,
-            'excelComparison' => $this->petaJabatanExcel->comparison($payload, $selectedSheet),
-            'viewMode' => in_array($viewMode, ['tree', 'org'], true) ? $viewMode : 'tree',
+            'excelComparison' => $this->petaJabatanExcel->comparison($payload, $viewMode === 'org' ? null : $selectedSheet),
+            'viewMode' => $viewMode,
             'selectedSheet' => $selectedSheet,
             'result' => null,
             'startIndex' => 1,
