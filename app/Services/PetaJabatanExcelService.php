@@ -109,7 +109,7 @@ class PetaJabatanExcelService
                 'name' => (string) $attributes['name'],
                 'title' => $title,
                 'dimension' => (string) ($worksheet->dimension->attributes()['ref'] ?? ''),
-                'records' => $this->extractRecords($rows),
+                'records' => $this->extractRecords($rows, $title),
                 'grid' => $this->compactGrid($rows, $merges, (string) ($worksheet->dimension->attributes()['ref'] ?? ''), $worksheet),
             ];
         }
@@ -132,10 +132,11 @@ class PetaJabatanExcelService
             $categoryMatch = $this->matchingCategoryJobs($categoryPool, $categoryKey);
             $categoryJobs = $categoryMatch['jobs'];
             $categoryExists = $categoryMatch['matched'];
-            $categoryMatchingKeys = array_values(array_filter($keys, fn (string $key): bool => isset($categoryJobs[$key])));
+            $categoryMatchingKeys = $this->matchingJobPoolKeys($keys, $categoryJobs);
+            $requiresCategoryMatch = (bool) ($record['category_is_position'] ?? false);
             $matchingKeys = $categoryMatchingKeys !== []
                 ? $categoryMatchingKeys
-                : ($categoryExists ? [] : array_values(array_filter($keys, fn (string $key): bool => isset($jobPool[$key]))));
+                : ($categoryExists || $requiresCategoryMatch ? [] : $this->matchingJobPoolKeys($keys, $jobPool));
             $pool = $categoryMatchingKeys !== [] ? $categoryJobs : $jobPool;
             $people = [];
 
@@ -303,6 +304,10 @@ class PetaJabatanExcelService
         }
 
         foreach ($categoryPool as $candidateKey => $candidateJobs) {
+            if (! $this->categoryContextMatches($categoryKey, (string) $candidateKey)) {
+                continue;
+            }
+
             if (! $this->jobKeyMatches($categoryKey, (string) $candidateKey)) {
                 continue;
             }
@@ -320,7 +325,43 @@ class PetaJabatanExcelService
         return ['matched' => $matched, 'jobs' => $jobs];
     }
 
-    private function extractRecords(array $rows): array
+    private function categoryContextMatches(string $categoryKey, string $candidateKey): bool
+    {
+        if (! preg_match('/\bKELURAHAN\s+(.+)$/u', $categoryKey, $match)) {
+            return true;
+        }
+
+        $tokens = $this->significantOrgTokens($match[1] ?? '');
+
+        if ($tokens === []) {
+            return true;
+        }
+
+        foreach ($tokens as $token) {
+            if (! str_contains($candidateKey, $token)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function matchingJobPoolKeys(array $keys, array $pool): array
+    {
+        $matches = [];
+
+        foreach ($keys as $key) {
+            foreach (array_keys($pool) as $candidateKey) {
+                if ($this->jobKeyMatches($key, (string) $candidateKey)) {
+                    $matches[] = (string) $candidateKey;
+                }
+            }
+        }
+
+        return array_values(array_unique($matches));
+    }
+
+    private function extractRecords(array $rows, ?string $sheetTitle = null): array
     {
         $headers = $this->tableHeaders($rows);
         $records = [];
@@ -352,6 +393,12 @@ class PetaJabatanExcelService
                     continue;
                 }
 
+                $categoryMatch = $this->categoryMatchForRecord($jabatan, $category['name']);
+
+                if ((bool) ($category['is_position'] ?? false)) {
+                    $categoryMatch = $this->withSheetUnitContext($categoryMatch, $sheetTitle);
+                }
+
                 $records[] = [
                     'row' => $row,
                     'col' => $header['jabatan_col'],
@@ -361,7 +408,7 @@ class PetaJabatanExcelService
                     'kebutuhan' => $kebutuhan,
                     'selisih' => $this->numericValue($rows[$row][$header['selisih_col']] ?? null),
                     'category' => $category['name'],
-                    'category_match' => $this->categoryMatchForRecord($jabatan, $category['name']),
+                    'category_match' => $categoryMatch,
                     'category_kelas' => $category['kelas'],
                     'category_is_position' => $category['is_position'],
                 ];
@@ -407,8 +454,8 @@ class PetaJabatanExcelService
     private function categoryForHeader(array $rows, array $header): array
     {
         $startRow = max((int) $header['row'] - 12, 1);
-        $startColumn = max((int) $header['jabatan_col'] - 2, 1);
-        $endColumn = (int) ($header['selisih_col'] ?? $header['kebutuhan_col']) + 2;
+        $startColumn = max((int) $header['jabatan_col'] - 16, 1);
+        $endColumn = (int) ($header['selisih_col'] ?? $header['kebutuhan_col']) + 6;
         $fallback = null;
         $fallbackRow = null;
         $fallbackColumn = null;
@@ -544,12 +591,39 @@ class PetaJabatanExcelService
         return 'Kepala '.$value;
     }
 
+    private function withSheetUnitContext(?string $category, ?string $sheetTitle): ?string
+    {
+        $category = $this->normalizeText($category);
+        $unit = $this->unitContextFromSheetTitle($sheetTitle);
+
+        if ($category === '' || $unit === '') {
+            return $category !== '' ? $category : null;
+        }
+
+        if (str_contains($this->jobKey($category), $this->jobKey($unit))) {
+            return $category;
+        }
+
+        return trim($category.' '.$unit);
+    }
+
+    private function unitContextFromSheetTitle(?string $sheetTitle): string
+    {
+        $title = $this->normalizeText($sheetTitle);
+
+        if (preg_match('/\b(KELURAHAN\s+.+)$/iu', $title, $match)) {
+            return $this->normalizeText($match[1]);
+        }
+
+        return '';
+    }
+
     private function isIgnoredCategoryLabel(string $value): bool
     {
         $key = $this->headerKey($value);
 
         return $this->isIgnoredRecordLabel($value)
-            || in_array($key, ['org', 'kelas', 'kls', 'b', 'k', '+/-', '-/+', 'kekuatan pegawai'], true)
+            || in_array($key, ['org', 'kelas', 'kls', 'b', 'k', '+/-', '-/+', 'beban kerja', 'kekuatan pegawai'], true)
             || str_starts_with($key, 'peta jabatan')
             || str_starts_with($key, 'jumlah pegawai')
             || preg_match('/\bkelas\s*\(?\s*\d+/i', $value)
@@ -1222,13 +1296,25 @@ class PetaJabatanExcelService
 
         foreach (($payload['skpd'] ?? []) as $skpd) {
             $skpdId = (int) ($skpd['skpd_id'] ?? 0);
+            $treeRows = $this->flattenTree($skpd['tree'] ?? []);
+            $unitKeys = [];
+
+            foreach ($treeRows as $row) {
+                $unitKey = $this->orgKey($row['jabatan'] ?? '');
+
+                if ($unitKey !== '') {
+                    $unitKeys[] = $unitKey;
+                }
+            }
+
             $skpdRows[] = [
                 'skpd_id' => $skpdId,
                 'nama' => (string) ($skpd['nama'] ?? ''),
                 'kode' => (string) ($skpd['kode'] ?? ''),
+                'unit_keys' => array_values(array_unique($unitKeys)),
             ];
 
-            foreach ($this->flattenTree($skpd['tree'] ?? []) as $row) {
+            foreach ($treeRows as $row) {
                 $key = $this->jobKey($row['jabatan'] ?? '');
                 $pegawai = trim((string) ($row['pegawai'] ?? ''));
 
@@ -1428,6 +1514,8 @@ class PetaJabatanExcelService
 
         $best = null;
         $bestScore = 0;
+        $bestUnit = null;
+        $bestUnitScore = 0;
 
         foreach ($skpdRows as $skpd) {
             $orgKey = $this->orgKey($skpd['nama'] ?? '');
@@ -1448,9 +1536,54 @@ class PetaJabatanExcelService
                 $best = $skpd;
                 $bestScore = $score;
             }
+
+            foreach (($skpd['unit_keys'] ?? []) as $unitKey) {
+                $unitScore = 0;
+
+                foreach ($this->significantOrgTokens((string) $unitKey) as $token) {
+                    if (str_contains($haystack, $token)) {
+                        $unitScore++;
+                    }
+                }
+
+                if ($unitScore > $bestUnitScore) {
+                    $bestUnit = $skpd;
+                    $bestUnitScore = $unitScore;
+                }
+            }
+        }
+
+        if ($bestUnitScore >= 2) {
+            return $bestUnit;
         }
 
         return $bestScore >= 1 ? $best : null;
+    }
+
+    private function significantOrgTokens(string $value): array
+    {
+        $stopwords = [
+            'DAN' => true,
+            'PADA' => true,
+            'KOTA' => true,
+            'BANJARMASIN' => true,
+            'KEPALA' => true,
+            'SEKSI' => true,
+            'KASI' => true,
+            'SUB' => true,
+            'BAGIAN' => true,
+            'BIDANG' => true,
+            'KELURAHAN' => true,
+            'LURAH' => true,
+            'KECAMATAN' => true,
+            'CAMAT' => true,
+            'SEKRETARIS' => true,
+        ];
+
+        return array_values(array_unique(array_filter(
+            explode(' ', $this->orgKey($value)),
+            fn (string $token): bool => strlen($token) > 3 && ! isset($stopwords[$token])
+        )));
     }
 
     private function findSkpdContaining(array $skpdRows, string $needle): ?array
@@ -1724,6 +1857,9 @@ class PetaJabatanExcelService
             'TATALAKSANA',
             'SPRITUAL',
         ], $value);
+        $value = preg_replace('/\bKASI\b/u', 'KEPALA SEKSI', $value) ?: $value;
+        $value = preg_replace('/\bKASUBBID\b/u', 'KEPALA SUB BIDANG', $value) ?: $value;
+        $value = preg_replace('/\bKASUBBAG\b/u', 'KEPALA SUB BAGIAN', $value) ?: $value;
         $value = preg_replace('/\s+PADA\s+.+$/u', '', $value) ?: $value;
         $value = preg_replace('/\s+KOTA\s+BANJARMASIN$/u', '', $value) ?: $value;
         $value = preg_replace('/[^A-Z0-9]+/u', ' ', $value) ?: $value;

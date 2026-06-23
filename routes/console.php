@@ -61,6 +61,9 @@ Artisan::command('peta-jabatan:export-static', function (TppScraperService $tppS
             'TATALAKSANA',
             'SPRITUAL',
         ], $value);
+        $value = preg_replace('/\bKASI\b/u', 'KEPALA SEKSI', $value) ?: $value;
+        $value = preg_replace('/\bKASUBBID\b/u', 'KEPALA SUB BIDANG', $value) ?: $value;
+        $value = preg_replace('/\bKASUBBAG\b/u', 'KEPALA SUB BAGIAN', $value) ?: $value;
         $value = preg_replace('/\s+PADA\s+.+$/u', '', $value) ?: $value;
         $value = preg_replace('/\s+KOTA\s+BANJARMASIN$/u', '', $value) ?: $value;
         $value = preg_replace('/[^A-Z0-9]+/u', ' ', $value) ?: $value;
@@ -95,11 +98,28 @@ Artisan::command('peta-jabatan:export-static', function (TppScraperService $tppS
         )));
     };
 
-    $jobMatches = function (?string $left, ?string $right) use ($jobKey, $significantJobTokens): bool {
+    $kelurahanContextMatches = function (string $left, string $right) use ($significantJobTokens): bool {
+        if (! preg_match('/\bKELURAHAN\s+(.+)$/u', $right, $match)) {
+            return true;
+        }
+
+        foreach ($significantJobTokens($match[1] ?? '') as $token) {
+            if (! str_contains($left, $token)) {
+                return false;
+            }
+        }
+
+        return true;
+    };
+    $jobMatches = function (?string $left, ?string $right) use ($jobKey, $significantJobTokens, $kelurahanContextMatches): bool {
         $left = $jobKey($left);
         $right = $jobKey($right);
 
         if ($left === '' || $right === '') {
+            return false;
+        }
+
+        if (! $kelurahanContextMatches($left, $right)) {
             return false;
         }
 
@@ -276,7 +296,7 @@ Artisan::command('peta-jabatan:export-static', function (TppScraperService $tppS
 
             $mapKey = implode('|', [
                 (string) $matchedSkpdId,
-                (string) ($record['category'] ?? 'Jabatan Kosong'),
+                (string) ($record['category_match'] ?? $record['category'] ?? 'Jabatan Kosong'),
                 $jobKey($record['jabatan'] ?? '-'),
                 (string) ($record['kelas'] ?? ''),
             ]);

@@ -164,11 +164,28 @@
             fn (string $token): bool => strlen($token) > 2 && ! isset($stopwords[$token])
         )));
     };
-    $jobMatches = function (?string $left, ?string $right) use ($jobKey, $significantJobTokens): bool {
+    $kelurahanContextMatches = function (string $left, string $right) use ($significantJobTokens): bool {
+        if (! preg_match('/\bKELURAHAN\s+(.+)$/u', $right, $match)) {
+            return true;
+        }
+
+        foreach ($significantJobTokens($match[1] ?? '') as $token) {
+            if (! str_contains($left, $token)) {
+                return false;
+            }
+        }
+
+        return true;
+    };
+    $jobMatches = function (?string $left, ?string $right) use ($jobKey, $significantJobTokens, $kelurahanContextMatches): bool {
         $left = $jobKey($left);
         $right = $jobKey($right);
 
         if ($left === '' || $right === '') {
+            return false;
+        }
+
+        if (! $kelurahanContextMatches($left, $right)) {
             return false;
         }
 
@@ -366,7 +383,7 @@
 
             $mapKey = implode('|', [
                 (string) $matchedSkpdId,
-                (string) ($record['category'] ?? 'Jabatan Kosong'),
+                (string) ($record['category_match'] ?? $record['category'] ?? 'Jabatan Kosong'),
                 $jobKey($record['jabatan'] ?? '-'),
                 (string) ($record['kelas'] ?? ''),
             ]);
