@@ -1512,6 +1512,33 @@ class PetaJabatanExcelService
             return $this->findSkpdContaining($skpdRows, 'DPRD');
         }
 
+        if (preg_match('/\bKELURAHAN\s+(.+)$/u', $haystack, $match)) {
+            $unitTokens = $this->significantOrgTokens($match[1] ?? '');
+
+            foreach ($skpdRows as $skpd) {
+                foreach (($skpd['unit_keys'] ?? []) as $unitKey) {
+                    $normalizedUnitKey = $this->orgKey((string) $unitKey);
+
+                    if (! str_contains($normalizedUnitKey, 'KELURAHAN') && ! str_contains($normalizedUnitKey, 'LURAH')) {
+                        continue;
+                    }
+
+                    $matchesAllTokens = $unitTokens !== [];
+
+                    foreach ($unitTokens as $token) {
+                        if (! str_contains($normalizedUnitKey, $token)) {
+                            $matchesAllTokens = false;
+                            break;
+                        }
+                    }
+
+                    if ($matchesAllTokens) {
+                        return $skpd;
+                    }
+                }
+            }
+        }
+
         $best = null;
         $bestScore = 0;
         $bestUnit = null;

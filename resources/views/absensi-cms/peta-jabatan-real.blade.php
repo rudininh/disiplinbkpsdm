@@ -12,6 +12,39 @@
     $selectedSheet = (int) ($selectedSheet ?? 0);
     $selectedExcelSheet = $excelSheets->firstWhere('index', $selectedSheet) ?? $excelSheets->first();
     $excelSummary = is_array($excelComparison['summary'] ?? null) ? $excelComparison['summary'] : [];
+    $isDinasBaruSheet = function (array $sheet): bool {
+        $haystack = strtoupper(trim(($sheet['name'] ?? '') . ' ' . ($sheet['title'] ?? '') . ' ' . ($sheet['matched_skpd']['nama'] ?? '')));
+
+        return str_contains($haystack, 'DINAS BARU');
+    };
+    $orgSheets = $excelSheets->reject(fn ($sheet) => $isDinasBaruSheet((array) $sheet))->values();
+    $orgSkpdGroups = $orgSheets
+        ->groupBy(fn ($sheet) => (string) ($sheet['matched_skpd']['skpd_id'] ?? 'unmatched:' . ($sheet['index'] ?? '')))
+        ->map(function ($sheets, $key) {
+            $first = $sheets->first();
+            $summary = [
+                'sheets' => $sheets->count(),
+                'records' => $sheets->sum(fn ($sheet) => (int) ($sheet['summary']['records'] ?? 0)),
+                'needed' => $sheets->sum(fn ($sheet) => (int) ($sheet['summary']['needed'] ?? 0)),
+                'filled' => $sheets->sum(fn ($sheet) => (int) ($sheet['summary']['filled'] ?? 0)),
+                'vacant' => $sheets->sum(fn ($sheet) => (int) ($sheet['summary']['vacant'] ?? 0)),
+                'real_extra' => $sheets->sum(fn ($sheet) => (int) ($sheet['summary']['real_extra'] ?? 0)),
+            ];
+
+            return [
+                'key' => (string) $key,
+                'skpd' => $first['matched_skpd'] ?? null,
+                'label' => $first['matched_skpd']['nama'] ?? 'Belum Dicocokkan',
+                'kode' => $first['matched_skpd']['kode'] ?? null,
+                'sheets' => $sheets->values(),
+                'summary' => $summary,
+            ];
+        })
+        ->sortBy(fn ($group) => (($group['skpd']['kode'] ?? 'ZZZ') . ' ' . ($group['label'] ?? '')))
+        ->values();
+    $firstOrgGroup = $orgSkpdGroups->first();
+    $selectedOrgSkpdKey = (string) request('org_skpd', is_array($firstOrgGroup) ? ($firstOrgGroup['key'] ?? '') : '');
+    $selectedOrgGroup = $orgSkpdGroups->firstWhere('key', $selectedOrgSkpdKey) ?? $orgSkpdGroups->first();
     $selectedSkpd = (string) request('skpd', 'all');
     $selectedSkpdMode = 'all';
     $selectedSkpdValue = '';
@@ -650,7 +683,7 @@
                         <i data-lucide="network" class="h-4 w-4"></i>
                         Tree Chart
                     </a>
-                    <a href="{{ route('cms.peta-jabatan-real.index', ['view' => 'org', 'sheet' => $selectedSheet]) }}" class="-mb-px inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold {{ $viewMode === 'org' ? 'border-zinc-950 text-zinc-950' : 'border-transparent text-zinc-500 hover:text-zinc-900' }}">
+                    <a href="{{ route('cms.peta-jabatan-real.index', ['view' => 'org', 'org_skpd' => $selectedOrgSkpdKey]) }}" class="-mb-px inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold {{ $viewMode === 'org' ? 'border-zinc-950 text-zinc-950' : 'border-transparent text-zinc-500 hover:text-zinc-900' }}">
                         <i data-lucide="git-fork" class="h-4 w-4"></i>
                         Organizational Chart
                     </a>
@@ -688,15 +721,15 @@
                         <div class="mt-6 grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
                             <aside class="rounded-lg border border-zinc-200 bg-white shadow-sm">
                                 <div class="border-b border-zinc-200 px-4 py-3">
-                                    <h2 class="text-sm font-semibold">Daftar Sheet</h2>
+                                    <h2 class="text-sm font-semibold">Daftar SKPD</h2>
                                 </div>
                                 <div class="max-h-[760px] overflow-auto p-2">
-                                    @foreach ($excelSheets as $sheet)
-                                        <a href="{{ route('cms.peta-jabatan-real.index', ['view' => 'org', 'sheet' => $sheet['index']]) }}" class="block rounded-md px-3 py-2 text-sm {{ (int) $sheet['index'] === (int) ($selectedExcelSheet['index'] ?? 0) ? 'bg-zinc-950 text-white' : 'hover:bg-zinc-100' }}">
-                                            <span class="block font-semibold">{{ $sheet['name'] }}</span>
-                                            <span class="mt-1 block text-xs {{ (int) $sheet['index'] === (int) ($selectedExcelSheet['index'] ?? 0) ? 'text-zinc-300' : 'text-zinc-500' }}">
-                                                {{ number_format((int) ($sheet['summary']['needed'] ?? 0)) }} kebutuhan,
-                                                {{ number_format((int) ($sheet['summary']['vacant'] ?? 0)) }} kosong
+                                    @foreach ($orgSkpdGroups as $group)
+                                        <a href="{{ route('cms.peta-jabatan-real.index', ['view' => 'org', 'org_skpd' => $group['key']]) }}" class="block rounded-md px-3 py-2 text-sm {{ (string) $group['key'] === (string) ($selectedOrgGroup['key'] ?? '') ? 'bg-zinc-950 text-white' : 'hover:bg-zinc-100' }}">
+                                            <span class="block font-semibold">{{ $group['label'] }}</span>
+                                            <span class="mt-1 block text-xs {{ (string) $group['key'] === (string) ($selectedOrgGroup['key'] ?? '') ? 'text-zinc-300' : 'text-zinc-500' }}">
+                                                {{ number_format((int) ($group['summary']['sheets'] ?? 0)) }} sheet,
+                                                {{ number_format((int) ($group['summary']['vacant'] ?? 0)) }} kosong
                                             </span>
                                         </a>
                                     @endforeach
@@ -704,7 +737,32 @@
                             </aside>
 
                             <div class="min-w-0 space-y-6">
-                                @if ($selectedExcelSheet)
+                                @if ($selectedOrgGroup)
+                                    <section class="rounded-lg border border-zinc-200 bg-white px-5 py-4 shadow-sm">
+                                        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                            <div>
+                                                <h2 class="text-lg font-semibold">{{ $selectedOrgGroup['label'] }}</h2>
+                                                <p class="mt-1 text-sm text-zinc-500">
+                                                    {{ number_format((int) ($selectedOrgGroup['summary']['sheets'] ?? 0)) }} sheet chart digabung sesuai SKPD Tree Chart.
+                                                </p>
+                                            </div>
+                                            <div class="grid grid-cols-3 gap-2 text-center text-xs">
+                                                <div class="rounded-md bg-zinc-100 px-3 py-2">
+                                                    <span class="block text-zinc-500">Kebutuhan</span>
+                                                    <strong class="text-zinc-900">{{ number_format((int) ($selectedOrgGroup['summary']['needed'] ?? 0)) }}</strong>
+                                                </div>
+                                                <div class="rounded-md bg-emerald-50 px-3 py-2">
+                                                    <span class="block text-emerald-700">Terisi</span>
+                                                    <strong class="text-emerald-900">{{ number_format((int) ($selectedOrgGroup['summary']['filled'] ?? 0)) }}</strong>
+                                                </div>
+                                                <div class="rounded-md bg-rose-50 px-3 py-2">
+                                                    <span class="block text-rose-700">Kosong</span>
+                                                    <strong class="text-rose-900">{{ number_format((int) ($selectedOrgGroup['summary']['vacant'] ?? 0)) }}</strong>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </section>
+                                    @foreach (($selectedOrgGroup['sheets'] ?? collect()) as $selectedExcelSheet)
                                     <section class="rounded-lg border border-zinc-200 bg-white shadow-sm">
                                         <div class="border-b border-zinc-200 px-5 py-4">
                                             <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -879,6 +937,7 @@
                                             </table>
                                         </div>
                                     </section>
+                                    @endforeach
                                 @endif
                             </div>
                         </div>
