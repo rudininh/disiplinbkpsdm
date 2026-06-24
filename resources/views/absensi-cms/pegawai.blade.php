@@ -165,7 +165,7 @@
                                             @if (isset($result['summary']['page_count']))
                                                 Dibaca {{ number_format($result['summary']['page_count'] ?? 0) }} halaman, parsed {{ number_format($result['summary']['parsed_rows'] ?? 0) }} baris.
                                             @elseif (isset($result['summary']['excel_rows']))
-                                                Profil {{ number_format($result['summary']['profiles_upserted'] ?? 0) }}, data pegawai baru {{ number_format($result['summary']['absensi_pegawai_created'] ?? 0) }}, diperbarui {{ number_format($result['summary']['absensi_pegawai_updated'] ?? 0) }}, SKPD cocok {{ number_format($result['summary']['matched_skpd'] ?? 0) }}.
+                                                Profil {{ number_format($result['summary']['profiles_upserted'] ?? 0) }}, data pegawai baru {{ number_format($result['summary']['absensi_pegawai_created'] ?? 0) }}, diperbarui {{ number_format($result['summary']['absensi_pegawai_updated'] ?? 0) }}, nonaktif {{ number_format($result['summary']['absensi_pegawai_inactivated'] ?? 0) }}, SKPD cocok {{ number_format($result['summary']['matched_skpd'] ?? 0) }}.
                                             @endif
                                         </div>
                                     @endif

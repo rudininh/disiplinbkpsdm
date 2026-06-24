@@ -145,8 +145,8 @@ class AbsensiCmsController extends Controller
 
         return view('absensi-cms.pegawai', [
             'pegawai' => $query->paginate(100)->withQueryString(),
-            'totalRows' => AbsensiPegawai::query()->count(),
-            'withDeviceRows' => AbsensiPegawai::query()->whereNotNull('device_id')->count(),
+            'totalRows' => $this->activeAbsensiPegawaiQuery()->count(),
+            'withDeviceRows' => $this->activeAbsensiPegawaiQuery()->whereNotNull('device_id')->count(),
             'lastFetchedAt' => AbsensiPegawai::query()->max('fetched_at'),
             'skpdOptions' => $this->pegawaiSkpdOptions(),
             'result' => null,
@@ -161,8 +161,8 @@ class AbsensiCmsController extends Controller
 
             return view('absensi-cms.pegawai', [
                 'pegawai' => $query->paginate(100),
-                'totalRows' => AbsensiPegawai::query()->count(),
-                'withDeviceRows' => AbsensiPegawai::query()->whereNotNull('device_id')->count(),
+                'totalRows' => $this->activeAbsensiPegawaiQuery()->count(),
+                'withDeviceRows' => $this->activeAbsensiPegawaiQuery()->whereNotNull('device_id')->count(),
                 'lastFetchedAt' => AbsensiPegawai::query()->max('fetched_at'),
                 'skpdOptions' => $this->pegawaiSkpdOptions(),
                 'result' => [
@@ -181,8 +181,8 @@ class AbsensiCmsController extends Controller
 
         return view('absensi-cms.pegawai', [
             'pegawai' => $query->paginate(100),
-            'totalRows' => AbsensiPegawai::query()->count(),
-            'withDeviceRows' => AbsensiPegawai::query()->whereNotNull('device_id')->count(),
+            'totalRows' => $this->activeAbsensiPegawaiQuery()->count(),
+            'withDeviceRows' => $this->activeAbsensiPegawaiQuery()->whereNotNull('device_id')->count(),
             'lastFetchedAt' => AbsensiPegawai::query()->max('fetched_at'),
             'skpdOptions' => $this->pegawaiSkpdOptions(),
             'result' => $result,
@@ -208,8 +208,8 @@ class AbsensiCmsController extends Controller
 
         return view('absensi-cms.pegawai', [
             'pegawai' => $query->paginate(100),
-            'totalRows' => AbsensiPegawai::query()->count(),
-            'withDeviceRows' => AbsensiPegawai::query()->whereNotNull('device_id')->count(),
+            'totalRows' => $this->activeAbsensiPegawaiQuery()->count(),
+            'withDeviceRows' => $this->activeAbsensiPegawaiQuery()->whereNotNull('device_id')->count(),
             'lastFetchedAt' => AbsensiPegawai::query()->max('fetched_at'),
             'skpdOptions' => $this->pegawaiSkpdOptions(),
             'result' => $result,
@@ -549,7 +549,7 @@ class AbsensiCmsController extends Controller
 
     private function pegawaiQuery(Request $request)
     {
-        $query = AbsensiPegawai::query();
+        $query = $this->activeAbsensiPegawaiQuery();
 
         if ($request->filled('skpd')) {
             $query->where('skpd', (string) $request->input('skpd'));
@@ -570,6 +570,17 @@ class AbsensiCmsController extends Controller
         }
 
         return $query;
+    }
+
+    private function activeAbsensiPegawaiQuery()
+    {
+        return AbsensiPegawai::query()
+            ->where(function ($query) {
+                $query
+                    ->where('row_data->excel_import_active', true)
+                    ->orWhere('row_data->excel_import_active', 'true')
+                    ->orWhere('row_data->excel_import_active', 1);
+            });
     }
 
     private function dailyReportQuery(Request $request)
@@ -1953,6 +1964,12 @@ class AbsensiCmsController extends Controller
     private function pegawaiSkpdOptions(): array
     {
         return AbsensiPegawai::query()
+            ->where(function ($query) {
+                $query
+                    ->where('row_data->excel_import_active', true)
+                    ->orWhere('row_data->excel_import_active', 'true')
+                    ->orWhere('row_data->excel_import_active', 1);
+            })
             ->whereNotNull('skpd')
             ->distinct()
             ->orderBy('skpd')
@@ -1977,6 +1994,7 @@ class AbsensiCmsController extends Controller
 
         return SiasnAbsensiLocationEmployee::query()
             ->whereNotNull('nip')
+            ->where('match_status', 'excel_siasn_import')
             ->distinct('nip')
             ->count('nip');
     }

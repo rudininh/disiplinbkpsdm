@@ -1357,7 +1357,7 @@ class PetaJabatanExcelService
 
         $pools = [];
         $employees = SiasnAbsensiLocationEmployee::query()
-            ->whereIn('match_status', ['lokasi_absensi_cocok', 'unit_cocok', 'excel_siasn_import'])
+            ->where('match_status', 'excel_siasn_import')
             ->whereNotNull('siasn_pns_profile_id')
             ->whereNotNull('siasn_jabatan')
             ->with('siasnProfile')

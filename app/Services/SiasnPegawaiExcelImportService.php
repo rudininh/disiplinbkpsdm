@@ -31,14 +31,18 @@ class SiasnPegawaiExcelImportService
             'excel_rows' => count($records),
             'absensi_pegawai_created' => 0,
             'absensi_pegawai_updated' => 0,
+            'absensi_pegawai_inactivated' => 0,
             'profiles_upserted' => 0,
             'siasn_employees_created' => 0,
             'siasn_employees_updated' => 0,
+            'siasn_employees_inactivated' => 0,
             'matched_skpd' => 0,
             'unmatched_skpd' => 0,
         ];
+        $activeNips = [];
 
         foreach ($records as $record) {
+            $activeNips[$record['nip']] = true;
             $skpd = $this->matchSkpd($record['unor_1'], $skpdLookup);
             $summary[$skpd === null ? 'unmatched_skpd' : 'matched_skpd']++;
 
@@ -77,6 +81,8 @@ class SiasnPegawaiExcelImportService
                 'row_data' => [
                     ...$record['raw'],
                     'source' => 'excel_siasn_pegawai',
+                    'excel_import_active' => true,
+                    'status_pegawai' => 'Aktif',
                     'matched_skpd_id' => $skpd['id'] ?? null,
                     'matched_skpd_name' => $skpd['nama'] ?? null,
                 ],
@@ -119,6 +125,8 @@ class SiasnPegawaiExcelImportService
                 'row_data' => [
                     ...$record['raw'],
                     'source' => 'excel_siasn_pegawai',
+                    'excel_import_active' => true,
+                    'status_pegawai' => 'Aktif',
                     'siasn_status' => $record['status_asn'],
                     'excel_row' => $record['excel_row'],
                     'matched_skpd_id' => $skpd['id'] ?? null,
@@ -139,6 +147,10 @@ class SiasnPegawaiExcelImportService
                 $summary['siasn_employees_created']++;
             }
         }
+
+        $inactiveSummary = $this->markMissingEmployeesInactive(array_keys($activeNips), $file->getClientOriginalName());
+        $summary['absensi_pegawai_inactivated'] = $inactiveSummary['absensi_pegawai_inactivated'];
+        $summary['siasn_employees_inactivated'] = $inactiveSummary['siasn_employees_inactivated'];
 
         return [
             'success' => true,
@@ -208,6 +220,60 @@ class SiasnPegawaiExcelImportService
         }
 
         return $records;
+    }
+
+    private function markMissingEmployeesInactive(array $activeNips, string $filename): array
+    {
+        $activeNips = array_values(array_unique(array_filter($activeNips)));
+        $summary = [
+            'absensi_pegawai_inactivated' => 0,
+            'siasn_employees_inactivated' => 0,
+        ];
+
+        AbsensiPegawai::query()
+            ->whereNotNull('nip')
+            ->whereNotIn('nip', $activeNips)
+            ->orderBy('id')
+            ->chunkById(500, function ($employees) use ($filename, &$summary): void {
+                foreach ($employees as $employee) {
+                    $rowData = is_array($employee->row_data) ? $employee->row_data : [];
+                    $rowData['excel_import_active'] = false;
+                    $rowData['status_pegawai'] = 'Nonaktif';
+                    $rowData['nonaktif_reason'] = 'Tidak ditemukan di Excel SIASN terakhir';
+                    $rowData['last_excel_siasn_source'] = $filename;
+                    $rowData['last_excel_siasn_checked_at'] = now()->toDateTimeString();
+
+                    $employee->update([
+                        'row_data' => $rowData,
+                        'fetched_at' => now(),
+                    ]);
+                    $summary['absensi_pegawai_inactivated']++;
+                }
+            });
+
+        SiasnAbsensiLocationEmployee::query()
+            ->whereNotNull('nip')
+            ->whereNotIn('nip', $activeNips)
+            ->orderBy('id')
+            ->chunkById(500, function ($employees) use ($filename, &$summary): void {
+                foreach ($employees as $employee) {
+                    $rowData = is_array($employee->row_data) ? $employee->row_data : [];
+                    $rowData['excel_import_active'] = false;
+                    $rowData['status_pegawai'] = 'Nonaktif';
+                    $rowData['nonaktif_reason'] = 'Tidak ditemukan di Excel SIASN terakhir';
+                    $rowData['last_excel_siasn_source'] = $filename;
+                    $rowData['last_excel_siasn_checked_at'] = now()->toDateTimeString();
+
+                    $employee->update([
+                        'match_status' => 'excel_siasn_nonaktif',
+                        'row_data' => $rowData,
+                        'fetched_at' => now(),
+                    ]);
+                    $summary['siasn_employees_inactivated']++;
+                }
+            });
+
+        return $summary;
     }
 
     private function readRows(string $path): array
