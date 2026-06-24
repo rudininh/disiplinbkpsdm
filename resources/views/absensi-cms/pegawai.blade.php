@@ -109,41 +109,75 @@
                     </div>
                 </div>
 
-                <div class="mt-6 grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(0,1fr)]">
-                    <form method="POST" action="{{ route('cms.pegawai.fetch') }}" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-                        @csrf
-                        <div class="flex items-center gap-3 border-b border-zinc-200 pb-4">
-                            <div class="flex h-9 w-9 items-center justify-center rounded-md bg-zinc-900 text-white">
-                                <i data-lucide="database-zap" class="h-4 w-4"></i>
+                <div class="mt-6 grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+                    <div class="space-y-4">
+                        <form method="POST" action="{{ route('cms.pegawai.import-siasn-excel') }}" enctype="multipart/form-data" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                            @csrf
+                            <div class="flex items-center gap-3 border-b border-zinc-200 pb-4">
+                                <div class="flex h-9 w-9 items-center justify-center rounded-md bg-cyan-600 text-white">
+                                    <i data-lucide="file-spreadsheet" class="h-4 w-4"></i>
+                                </div>
+                                <div>
+                                    <h2 class="text-base font-semibold">Import Excel SIASN</h2>
+                                    <p class="text-sm text-zinc-500">Kolom: NIP BARU, NAMA, STATUS ASN, JABATAN NAMA, UNOR 2, UNOR 1.</p>
+                                </div>
                             </div>
-                            <div>
-                                <h2 class="text-base font-semibold">Ambil Pegawai</h2>
-                                <p class="text-sm text-zinc-500">Mengambil seluruh halaman pegawai dari portal.</p>
-                            </div>
-                        </div>
 
-                        @if (is_array($result))
-                            <div class="mt-4 rounded-md border {{ ($result['success'] ?? false) ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800' }} px-3 py-2 text-sm">
-                                <div class="font-medium">
+                            @error('pegawai_excel')
+                                <div class="mt-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{{ $message }}</div>
+                            @enderror
+
+                            <div class="mt-4">
+                                <input name="pegawai_excel" type="file" accept=".xlsx"
+                                    class="block w-full rounded-md border border-zinc-300 bg-white text-sm text-zinc-700 file:mr-3 file:border-0 file:bg-zinc-900 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-zinc-800">
+                                <p class="mt-2 text-xs text-zinc-500">Upload ulang akan memperbarui pegawai berdasarkan NIP dan ikut mengisi Jabatan SIASN pada Peta Jabatan Real.</p>
+                            </div>
+
+                            <button type="submit" class="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md bg-cyan-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-800">
+                                <i data-lucide="upload-cloud" class="h-4 w-4"></i>
+                                Import & Sinkron
+                            </button>
+                        </form>
+
+                        <form method="POST" action="{{ route('cms.pegawai.fetch') }}" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                            @csrf
+                            <div class="flex items-center gap-3 border-b border-zinc-200 pb-4">
+                                <div class="flex h-9 w-9 items-center justify-center rounded-md bg-zinc-900 text-white">
+                                    <i data-lucide="database-zap" class="h-4 w-4"></i>
+                                </div>
+                                <div>
+                                    <h2 class="text-base font-semibold">Ambil Pegawai</h2>
+                                    <p class="text-sm text-zinc-500">Mengambil seluruh halaman pegawai dari portal.</p>
+                                </div>
+                            </div>
+
+                            @if (is_array($result))
+                                <div class="mt-4 rounded-md border {{ ($result['success'] ?? false) ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800' }} px-3 py-2 text-sm">
+                                    <div class="font-medium">
+                                        @if ($result['success'] ?? false)
+                                            {{ $result['message'] ?? ('Tersimpan ' . number_format($result['summary']['stored_rows'] ?? 0) . ' baris.') }}
+                                        @else
+                                            {{ $result['message'] ?? 'Proses pegawai gagal.' }}
+                                        @endif
+                                    </div>
                                     @if ($result['success'] ?? false)
-                                        Tersimpan {{ number_format($result['summary']['stored_rows'] ?? 0) }} baris.
-                                    @else
-                                        {{ $result['message'] ?? 'Fetch pegawai gagal.' }}
+                                        <div class="mt-1 text-xs">
+                                            @if (isset($result['summary']['page_count']))
+                                                Dibaca {{ number_format($result['summary']['page_count'] ?? 0) }} halaman, parsed {{ number_format($result['summary']['parsed_rows'] ?? 0) }} baris.
+                                            @elseif (isset($result['summary']['excel_rows']))
+                                                Profil {{ number_format($result['summary']['profiles_upserted'] ?? 0) }}, data pegawai baru {{ number_format($result['summary']['absensi_pegawai_created'] ?? 0) }}, diperbarui {{ number_format($result['summary']['absensi_pegawai_updated'] ?? 0) }}, SKPD cocok {{ number_format($result['summary']['matched_skpd'] ?? 0) }}.
+                                            @endif
+                                        </div>
                                     @endif
                                 </div>
-                                @if ($result['success'] ?? false)
-                                    <div class="mt-1 text-xs">
-                                        Dibaca {{ number_format($result['summary']['page_count'] ?? 0) }} halaman, parsed {{ number_format($result['summary']['parsed_rows'] ?? 0) }} baris.
-                                    </div>
-                                @endif
-                            </div>
-                        @endif
+                            @endif
 
-                        <button type="submit" class="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800">
-                            <i data-lucide="download-cloud" class="h-4 w-4"></i>
-                            Ambil & Simpan
-                        </button>
-                    </form>
+                            <button type="submit" class="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800">
+                                <i data-lucide="download-cloud" class="h-4 w-4"></i>
+                                Ambil & Simpan
+                            </button>
+                        </form>
+                    </div>
 
                     <div class="min-w-0 rounded-lg border border-zinc-200 bg-white shadow-sm">
                         <div class="border-b border-zinc-200 px-5 py-4">

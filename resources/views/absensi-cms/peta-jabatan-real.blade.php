@@ -468,6 +468,7 @@
                                         $person['pegawai'] ?? '-',
                                         $person['nip'] ?? null,
                                         $person['status_asn'] ?? null,
+                                        ! empty($person['jabatan']) ? 'Jabatan SIASN: ' . $person['jabatan'] : null,
                                     ]))),
                                     'children' => [],
                                     'callout_class' => 'info',
@@ -894,7 +895,7 @@
                                     <section class="rounded-lg border border-zinc-200 bg-white shadow-sm">
                                         <div class="border-b border-zinc-200 px-5 py-4">
                                             <h2 class="text-base font-semibold">Slot Terisi dan Kosong</h2>
-                                            <p class="mt-1 text-sm text-zinc-500">Setiap baris kebutuhan Excel dibuat menjadi slot, lalu diisi nama pegawai real dari TPP bila cocok.</p>
+                                            <p class="mt-1 text-sm text-zinc-500">Setiap baris kebutuhan Excel dibuat menjadi slot, lalu diisi nama pegawai real dari TPP atau Jabatan SIASN bila cocok.</p>
                                         </div>
                                         <div class="overflow-auto">
                                             <table class="min-w-full divide-y divide-zinc-200 text-sm">
@@ -904,7 +905,7 @@
                                                         <th class="px-4 py-3">Kelas</th>
                                                         <th class="px-4 py-3">B</th>
                                                         <th class="px-4 py-3">K</th>
-                                                        <th class="px-4 py-3">Terisi Real</th>
+                                                        <th class="px-4 py-3">Terisi Real/SIASN</th>
                                                         <th class="px-4 py-3">Kosong</th>
                                                         <th class="px-4 py-3">Pegawai / Slot</th>
                                                     </tr>

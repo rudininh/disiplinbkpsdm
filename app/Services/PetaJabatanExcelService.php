@@ -182,14 +182,10 @@ class PetaJabatanExcelService
 
     private function siasnPeopleForRecord(array $record, array $keys, array $siasnJobPool): array
     {
-        if (! str_contains(strtoupper((string) ($record['category'] ?? '')), 'JABATAN FUNGSIONAL')) {
-            return [];
-        }
-
         $people = [];
         $unitKind = $this->educationUnitKindForFunctionalRecord($record['jabatan'] ?? '');
 
-        foreach ($keys as $key) {
+        foreach ($this->matchingJobPoolKeys($keys, $siasnJobPool) as $key) {
             foreach (($siasnJobPool[$key] ?? []) as $person) {
                 if ($unitKind !== null && ($person['unit_kind'] ?? null) !== $unitKind) {
                     continue;
@@ -268,6 +264,7 @@ class PetaJabatanExcelService
             $name,
             preg_replace('/\D+/', '', (string) ($person['nip'] ?? '')) ?: null,
             $this->asnStatus($person['status_asn'] ?? null),
+            isset($person['jabatan']) && (string) $person['jabatan'] !== '' ? 'Jabatan SIASN: '.$person['jabatan'] : null,
         ]));
 
         return implode(' | ', $parts);
@@ -1360,7 +1357,7 @@ class PetaJabatanExcelService
 
         $pools = [];
         $employees = SiasnAbsensiLocationEmployee::query()
-            ->whereIn('match_status', ['lokasi_absensi_cocok', 'unit_cocok'])
+            ->whereIn('match_status', ['lokasi_absensi_cocok', 'unit_cocok', 'excel_siasn_import'])
             ->whereNotNull('siasn_pns_profile_id')
             ->whereNotNull('siasn_jabatan')
             ->with('siasnProfile')
@@ -1393,6 +1390,7 @@ class PetaJabatanExcelService
                 'lokasi_nama' => $this->normalizeText((string) ($employee->lokasi_nama ?? '')),
                 'unit_kind' => $this->educationUnitKind($unitKerja),
                 'status_asn' => $this->asnStatus($employee->siasnProfile?->jenis_asn ?? data_get($employee->row_data, 'siasn_status')),
+                'match_status' => $employee->match_status,
             ];
 
             $pools[$skpdId]['jobs'][$key][] = $person;
@@ -1421,6 +1419,10 @@ class PetaJabatanExcelService
         }
 
         $upper = strtoupper($status);
+
+        if (in_array($upper, ['PNS', 'CPNS', 'PPPK', 'PPPK PARUH WAKTU'], true)) {
+            return true;
+        }
 
         return str_contains($upper, 'AKTIF')
             && ! str_contains($upper, 'TIDAK AKTIF')

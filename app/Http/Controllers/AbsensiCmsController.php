@@ -9,6 +9,7 @@ use App\Models\AbsensiPppk;
 use App\Models\AbsensiPppkReport;
 use App\Services\AbsensiScraperService;
 use App\Services\PetaJabatanExcelService;
+use App\Services\SiasnPegawaiExcelImportService;
 use App\Services\TppScraperService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -22,7 +23,8 @@ class AbsensiCmsController extends Controller
     public function __construct(
         private readonly AbsensiScraperService $scraper,
         private readonly TppScraperService $tppScraper,
-        private readonly PetaJabatanExcelService $petaJabatanExcel
+        private readonly PetaJabatanExcelService $petaJabatanExcel,
+        private readonly SiasnPegawaiExcelImportService $siasnPegawaiExcelImport
     )
     {
     }
@@ -174,6 +176,33 @@ class AbsensiCmsController extends Controller
         );
 
         $query = AbsensiPegawai::query()->latest('fetched_at')->latest('id');
+
+        return view('absensi-cms.pegawai', [
+            'pegawai' => $query->paginate(100),
+            'totalRows' => AbsensiPegawai::query()->count(),
+            'withDeviceRows' => AbsensiPegawai::query()->whereNotNull('device_id')->count(),
+            'lastFetchedAt' => AbsensiPegawai::query()->max('fetched_at'),
+            'skpdOptions' => $this->pegawaiSkpdOptions(),
+            'result' => $result,
+        ]);
+    }
+
+    public function importPegawaiSiasnExcel(Request $request): View
+    {
+        $data = $request->validate([
+            'pegawai_excel' => ['required', 'file', 'mimes:xlsx', 'max:51200'],
+        ]);
+
+        try {
+            $result = $this->siasnPegawaiExcelImport->import($data['pegawai_excel']);
+        } catch (\Throwable $exception) {
+            $result = [
+                'success' => false,
+                'message' => $exception->getMessage(),
+            ];
+        }
+
+        $query = $this->pegawaiQuery($request)->latest('fetched_at')->latest('id');
 
         return view('absensi-cms.pegawai', [
             'pegawai' => $query->paginate(100),
