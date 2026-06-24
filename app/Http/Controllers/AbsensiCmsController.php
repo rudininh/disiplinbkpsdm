@@ -7,6 +7,7 @@ use App\Models\AbsensiDailyReport;
 use App\Models\AbsensiPegawai;
 use App\Models\AbsensiPppk;
 use App\Models\AbsensiPppkReport;
+use App\Models\SiasnAbsensiLocationEmployee;
 use App\Services\AbsensiScraperService;
 use App\Services\PetaJabatanExcelService;
 use App\Services\SiasnPegawaiExcelImportService;
@@ -16,6 +17,7 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class AbsensiCmsController extends Controller
@@ -276,6 +278,7 @@ class AbsensiCmsController extends Controller
             'result' => null,
             'startIndex' => 1,
             'endIndex' => 35,
+            'siasnEmployeeTotal' => $this->siasnEmployeeTotal(),
         ]);
     }
 
@@ -301,6 +304,7 @@ class AbsensiCmsController extends Controller
                 ],
                 'startIndex' => (int) ($data['start_index'] ?? 1),
                 'endIndex' => (int) ($data['end_index'] ?? 35),
+                'siasnEmployeeTotal' => $this->siasnEmployeeTotal(),
             ]);
         }
 
@@ -319,6 +323,7 @@ class AbsensiCmsController extends Controller
             'result' => $result,
             'startIndex' => (int) ($data['start_index'] ?? 1),
             'endIndex' => (int) ($data['end_index'] ?? 35),
+            'siasnEmployeeTotal' => $this->siasnEmployeeTotal(),
         ]);
     }
 
@@ -1962,6 +1967,18 @@ class AbsensiCmsController extends Controller
         $configured = config('services.absensi.skpd', []);
 
         return is_array($configured) ? $configured : [];
+    }
+
+    private function siasnEmployeeTotal(): int
+    {
+        if (! Schema::hasTable('siasn_absensi_location_employees')) {
+            return 0;
+        }
+
+        return SiasnAbsensiLocationEmployee::query()
+            ->whereNotNull('nip')
+            ->distinct('nip')
+            ->count('nip');
     }
 
     private function latestSavedCuti(): ?array

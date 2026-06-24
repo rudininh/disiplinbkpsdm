@@ -5,6 +5,7 @@
     $successRows = $skpdRows->where('success', true);
     $failedRows = $skpdRows->where('success', false);
     $totalJabatan = (int) ($meta['total_jabatan'] ?? $successRows->sum(fn ($row) => (int) ($row['jabatan_count'] ?? 0)));
+    $siasnEmployeeTotal = (int) ($siasnEmployeeTotal ?? 0);
     $lastStatus = $result['success'] ?? null;
     $viewMode = $viewMode ?? 'tree';
     $excelComparison = is_array($excelComparison ?? null) ? $excelComparison : ['success' => false, 'sheets' => [], 'summary' => []];
@@ -612,7 +613,7 @@
                     </div>
                 @endif
 
-                <div class="grid gap-4 md:grid-cols-4">
+                <div class="grid gap-4 md:grid-cols-5">
                     <div class="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
                         <div class="flex items-center justify-between">
                             <p class="text-sm font-medium text-zinc-500">Status Fetch</p>
@@ -640,6 +641,13 @@
                     <div class="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
                         <p class="text-sm font-medium text-zinc-500">Total Jabatan</p>
                         <p class="mt-3 text-2xl font-semibold">{{ number_format($totalJabatan) }}</p>
+                        <p class="mt-1 text-xs text-zinc-500">Node jabatan TPP</p>
+                    </div>
+
+                    <div class="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                        <p class="text-sm font-medium text-zinc-500">Pegawai SIASN</p>
+                        <p class="mt-3 text-2xl font-semibold">{{ number_format($siasnEmployeeTotal) }}</p>
+                        <p class="mt-1 text-xs text-zinc-500">NIP unik dari import/SIASN</p>
                     </div>
 
                     <div class="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
