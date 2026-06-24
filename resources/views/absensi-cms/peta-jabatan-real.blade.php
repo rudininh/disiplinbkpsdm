@@ -16,6 +16,7 @@
     $lastStatus = $result['success'] ?? null;
     $viewMode = $viewMode ?? 'tree';
     $excelComparison = is_array($excelComparison ?? null) ? $excelComparison : ['success' => false, 'sheets' => [], 'summary' => []];
+    $activeSiasnEmployeeLookup = is_array($activeSiasnEmployeeLookup ?? null) ? $activeSiasnEmployeeLookup : [];
     $excelSheets = collect($excelComparison['sheets'] ?? []);
     $selectedSheet = (int) ($selectedSheet ?? 0);
     $selectedExcelSheet = $excelSheets->firstWhere('index', $selectedSheet) ?? $excelSheets->first();
@@ -334,6 +335,44 @@
 
         return in_array($key, ['', 'KOSONG', 'LOWONG'], true)
             || $key === $jobKey($jabatan);
+    };
+    $employeeNameKey = function (?string $value): string {
+        return str((string) $value)
+            ->lower()
+            ->replaceMatches('/\b(s\.?h|s\.?sos|s\.?stp|s\.?kom|s\.?pd|s\.?si|s\.?t|m\.?si|m\.?kom|m\.?pd|m\.?hum|a\.?md)\b\.?/u', ' ')
+            ->replaceMatches('/[^a-z0-9]+/u', ' ')
+            ->replaceMatches('/\s+/u', ' ')
+            ->trim()
+            ->toString();
+    };
+    $isActiveSiasnPegawai = function (?string $pegawai, string $skpdId) use ($activeSiasnEmployeeLookup, $employeeNameKey): bool {
+        $pegawai = trim((string) $pegawai);
+        if ($pegawai === '' || $pegawai === '-') {
+            return false;
+        }
+
+        $lookup = $activeSiasnEmployeeLookup[$skpdId] ?? [];
+        $nip = preg_match('/\d{18}/', $pegawai, $matches) === 1 ? $matches[0] : null;
+        if ($nip !== null && isset($lookup['nips'][$nip])) {
+            return true;
+        }
+
+        $nameKey = $employeeNameKey($pegawai);
+
+        return $nameKey !== '' && isset($lookup['names'][$nameKey]);
+    };
+    $stripInactiveTppPeople = function (array $nodes, string $skpdId) use (&$stripInactiveTppPeople, $isVacantPegawai, $isActiveSiasnPegawai): array {
+        return array_map(function (array $node) use ($stripInactiveTppPeople, $skpdId, $isVacantPegawai, $isActiveSiasnPegawai): array {
+            $node['children'] = $stripInactiveTppPeople(is_array($node['children'] ?? null) ? $node['children'] : [], $skpdId);
+            $source = $node['source'] ?? 'tpp';
+            $pegawai = trim((string) ($node['pegawai'] ?? ''));
+
+            if ($source === 'tpp' && ! $isVacantPegawai($pegawai, $node['jabatan'] ?? '') && ! $isActiveSiasnPegawai($pegawai, $skpdId)) {
+                $node['pegawai'] = null;
+            }
+
+            return $node;
+        }, $nodes);
     };
     $compactEmptyTppNodes = function (array $nodes) use (&$compactEmptyTppNodes, $jobKey, $isVacantPegawai): array {
         $compacted = [];
@@ -1008,7 +1047,9 @@
                             @php
                                 $vacancyNodes = $excelVacanciesBySkpd[(string) ($skpd['skpd_id'] ?? '')] ?? [];
                                 $vacancyCount = collect($vacancyNodes)->sum(fn ($node) => (int) ($node['vacancy_count'] ?? 0));
-                                $realTree = $compactEmptyTppNodes(is_array($skpd['tree'] ?? null) ? $skpd['tree'] : []);
+                                $rawTree = is_array($skpd['tree'] ?? null) ? $skpd['tree'] : [];
+                                $rawTree = $isSiasnPage ? $stripInactiveTppPeople($rawTree, (string) ($skpd['skpd_id'] ?? 0)) : $rawTree;
+                                $realTree = $compactEmptyTppNodes($rawTree);
                                 $realTree = array_values([...$realTree, ...($siasnFunctionalTreesBySkpd[(string) ($skpd['skpd_id'] ?? '')] ?? [])]);
                                 $mergedTree = $appendVacancies($realTree, $vacancyNodes);
                             @endphp

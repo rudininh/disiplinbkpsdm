@@ -300,6 +300,7 @@ class AbsensiCmsController extends Controller
             'startIndex' => 1,
             'endIndex' => 35,
             'siasnEmployeeTotal' => $this->siasnEmployeeTotal(),
+            'activeSiasnEmployeeLookup' => $this->activeSiasnEmployeeLookup(),
             'pageMode' => 'siasn',
             'pageTitle' => 'Peta Jabatan SIASN',
             'pageDescription' => 'Peta jabatan yang menyesuaikan pegawai aktif SIASN dari import Excel, Peta Jabatan Excel, dan Peta Jabatan Real.',
@@ -2025,6 +2026,46 @@ class AbsensiCmsController extends Controller
             ->where('match_status', 'excel_siasn_import')
             ->distinct('nip')
             ->count('nip');
+    }
+
+    private function activeSiasnEmployeeLookup(): array
+    {
+        if (! Schema::hasTable('siasn_absensi_location_employees')) {
+            return [];
+        }
+
+        $lookup = [];
+
+        SiasnAbsensiLocationEmployee::query()
+            ->where('match_status', 'excel_siasn_import')
+            ->whereNotNull('nip')
+            ->get(['skpd_id', 'nip', 'nama'])
+            ->each(function (SiasnAbsensiLocationEmployee $employee) use (&$lookup): void {
+                $skpdId = (string) ((int) ($employee->skpd_id ?? 0));
+                $nip = preg_replace('/\D+/', '', (string) ($employee->nip ?? '')) ?: null;
+                $nameKey = $this->employeeNameKey((string) ($employee->nama ?? ''));
+
+                if ($nip !== null) {
+                    $lookup[$skpdId]['nips'][$nip] = true;
+                }
+
+                if ($nameKey !== '') {
+                    $lookup[$skpdId]['names'][$nameKey] = true;
+                }
+            });
+
+        return $lookup;
+    }
+
+    private function employeeNameKey(string $value): string
+    {
+        return Str::of($value)
+            ->lower()
+            ->replaceMatches('/\b(s\.?h|s\.?sos|s\.?stp|s\.?kom|s\.?pd|s\.?si|s\.?t|m\.?si|m\.?kom|m\.?pd|m\.?hum|a\.?md)\b\.?/u', ' ')
+            ->replaceMatches('/[^a-z0-9]+/u', ' ')
+            ->replaceMatches('/\s+/u', ' ')
+            ->trim()
+            ->toString();
     }
 
     private function latestSavedCuti(): ?array
