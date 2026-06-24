@@ -10,7 +10,7 @@ class PetaJabatanExcelService
 {
     private const DEFAULT_PATH = 'C:/Users/RUDINI/Downloads/Lampiran Perubahan kedua dan ketiga gabung Peta Jabatan 2026.xlsx';
 
-    public function comparison(?array $tppPayload, ?int $selectedSheet = null, bool $includeSiasn = false): array
+    public function comparison(?array $tppPayload, ?int $selectedSheet = null, bool $includeSiasn = false, bool $includeTppPeople = true): array
     {
         $path = (string) config('services.tpp.peta_jabatan_excel_path', self::DEFAULT_PATH);
 
@@ -33,11 +33,11 @@ class PetaJabatanExcelService
         foreach ($workbook['sheets'] as $index => $sheet) {
             $matchedSkpd = $this->matchSkpd($sheet, $real['skpd']);
             $pool = $matchedSkpd ? [
-                'jobs' => $real['by_skpd'][$matchedSkpd['skpd_id']] ?? [],
-                'categories' => $real['by_skpd_category'][$matchedSkpd['skpd_id']] ?? [],
+                'jobs' => $includeTppPeople ? ($real['by_skpd'][$matchedSkpd['skpd_id']] ?? []) : [],
+                'categories' => $includeTppPeople ? ($real['by_skpd_category'][$matchedSkpd['skpd_id']] ?? []) : [],
                 'siasn_jobs' => $siasnFunctionalPools[$matchedSkpd['skpd_id']]['jobs'] ?? [],
             ] : [
-                'jobs' => $real['global'],
+                'jobs' => $includeTppPeople ? $real['global'] : [],
                 'categories' => [],
                 'siasn_jobs' => [],
             ];

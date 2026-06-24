@@ -293,7 +293,7 @@ class AbsensiCmsController extends Controller
 
         return view('absensi-cms.peta-jabatan-real', [
             'payload' => $payload,
-            'excelComparison' => $this->petaJabatanExcel->comparison($payload, $viewMode === 'org' ? null : $selectedSheet, true),
+            'excelComparison' => $this->petaJabatanExcel->comparison($payload, $viewMode === 'org' ? null : $selectedSheet, true, false),
             'viewMode' => $viewMode,
             'selectedSheet' => $selectedSheet,
             'result' => null,
