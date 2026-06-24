@@ -10,7 +10,7 @@ class PetaJabatanExcelService
 {
     private const DEFAULT_PATH = 'C:/Users/RUDINI/Downloads/Lampiran Perubahan kedua dan ketiga gabung Peta Jabatan 2026.xlsx';
 
-    public function comparison(?array $tppPayload, ?int $selectedSheet = null): array
+    public function comparison(?array $tppPayload, ?int $selectedSheet = null, bool $includeSiasn = false): array
     {
         $path = (string) config('services.tpp.peta_jabatan_excel_path', self::DEFAULT_PATH);
 
@@ -26,7 +26,7 @@ class PetaJabatanExcelService
 
         $workbook = $this->readWorkbook($path);
         $real = $this->flattenTppPayload($tppPayload);
-        $siasnFunctionalPools = $this->siasnFunctionalPools();
+        $siasnFunctionalPools = $includeSiasn ? $this->siasnFunctionalPools() : [];
         $sheets = [];
         $summary = $this->emptySummary();
 

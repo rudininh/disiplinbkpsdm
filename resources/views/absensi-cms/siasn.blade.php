@@ -47,6 +47,10 @@
                     <i data-lucide="network" class="h-4 w-4"></i>
                     Peta Jabatan Real
                 </a>
+                <a href="{{ route('cms.peta-jabatan-siasn.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="git-compare-arrows" class="h-4 w-4"></i>
+                    Peta Jabatan SIASN
+                </a>
                 <a href="{{ route('cms.siasn.index') }}" class="flex items-center gap-3 rounded-md bg-white/10 px-3 py-2 text-sm font-medium">
                     <i data-lucide="database-zap" class="h-4 w-4"></i>
                     SIASN Profil ASN

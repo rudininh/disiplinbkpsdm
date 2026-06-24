@@ -47,6 +47,10 @@
                     <i data-lucide="network" class="h-4 w-4"></i>
                     Peta Jabatan Real
                 </a>
+                <a href="{{ route('cms.peta-jabatan-siasn.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="git-compare-arrows" class="h-4 w-4"></i>
+                    Peta Jabatan SIASN
+                </a>
                 <a href="{{ route('cms.siasn.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="database-zap" class="h-4 w-4"></i>
                     SIASN Profil ASN
@@ -130,7 +134,7 @@
                             <div class="mt-4">
                                 <input name="pegawai_excel" type="file" accept=".xlsx"
                                     class="block w-full rounded-md border border-zinc-300 bg-white text-sm text-zinc-700 file:mr-3 file:border-0 file:bg-zinc-900 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-zinc-800">
-                                <p class="mt-2 text-xs text-zinc-500">Upload ulang akan memperbarui pegawai berdasarkan NIP dan ikut mengisi Jabatan SIASN pada Peta Jabatan Real.</p>
+                                <p class="mt-2 text-xs text-zinc-500">Upload ulang akan memperbarui pegawai berdasarkan NIP dan ikut mengisi Peta Jabatan SIASN.</p>
                             </div>
 
                             <button type="submit" class="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md bg-cyan-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-800">

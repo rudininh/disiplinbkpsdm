@@ -21,6 +21,7 @@ Route::prefix('cms')->name('cms.')->group(function () {
     Route::get('/analisa-absensi/export', [AbsensiCmsController::class, 'exportAnalisaAbsensi'])->name('analisa-absensi.export');
     Route::get('/peta-jabatan-real', [AbsensiCmsController::class, 'petaJabatanReal'])->name('peta-jabatan-real.index');
     Route::post('/peta-jabatan-real/fetch', [AbsensiCmsController::class, 'fetchPetaJabatanReal'])->name('peta-jabatan-real.fetch');
+    Route::get('/peta-jabatan-siasn', [AbsensiCmsController::class, 'petaJabatanSiasn'])->name('peta-jabatan-siasn.index');
     Route::get('/siasn', [SiasnProfileController::class, 'index'])->name('siasn.index');
     Route::post('/siasn/fetch', [SiasnProfileController::class, 'fetch'])->name('siasn.fetch');
     Route::get('/siasn/test-login', fn () => redirect()->route('cms.siasn.index'));

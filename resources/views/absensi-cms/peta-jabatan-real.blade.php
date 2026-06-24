@@ -1,11 +1,18 @@
 @php
+    $pageMode = $pageMode ?? 'real';
+    $isSiasnPage = $pageMode === 'siasn';
+    $pageTitle = $pageTitle ?? ($isSiasnPage ? 'Peta Jabatan SIASN' : 'Peta Jabatan Real');
+    $pageDescription = $pageDescription ?? ($isSiasnPage
+        ? 'Peta jabatan yang menyesuaikan pegawai aktif SIASN dari import Excel, Peta Jabatan Excel, dan Peta Jabatan Real.'
+        : 'Data struktur jabatan real dari portal TPP untuk seluruh SKPD.');
+    $indexRouteName = $isSiasnPage ? 'cms.peta-jabatan-siasn.index' : 'cms.peta-jabatan-real.index';
     $payload = is_array($payload ?? null) ? $payload : null;
     $meta = is_array($payload['meta'] ?? null) ? $payload['meta'] : [];
     $skpdRows = collect(is_array($payload['skpd'] ?? null) ? $payload['skpd'] : []);
     $successRows = $skpdRows->where('success', true);
     $failedRows = $skpdRows->where('success', false);
     $totalJabatan = (int) ($meta['total_jabatan'] ?? $successRows->sum(fn ($row) => (int) ($row['jabatan_count'] ?? 0)));
-    $siasnEmployeeTotal = (int) ($siasnEmployeeTotal ?? 0);
+    $siasnEmployeeTotal = $isSiasnPage ? (int) ($siasnEmployeeTotal ?? 0) : null;
     $lastStatus = $result['success'] ?? null;
     $viewMode = $viewMode ?? 'tree';
     $excelComparison = is_array($excelComparison ?? null) ? $excelComparison : ['success' => false, 'sheets' => [], 'summary' => []];
@@ -527,7 +534,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Peta Jabatan Real - Disiplin BKPSDM</title>
+    <title>{{ $pageTitle }} - Disiplin BKPSDM</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
@@ -567,9 +574,13 @@
                     <i data-lucide="radar" class="h-4 w-4"></i>
                     Analisa Absensi
                 </a>
-                <a href="{{ route('cms.peta-jabatan-real.index') }}" class="flex items-center gap-3 rounded-md bg-white/10 px-3 py-2 text-sm font-medium">
+                <a href="{{ route('cms.peta-jabatan-real.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {{ ! $isSiasnPage ? 'bg-white/10 font-medium text-white' : 'text-zinc-300 hover:bg-white/10 hover:text-white' }}">
                     <i data-lucide="network" class="h-4 w-4"></i>
                     Peta Jabatan Real
+                </a>
+                <a href="{{ route('cms.peta-jabatan-siasn.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {{ $isSiasnPage ? 'bg-white/10 font-medium text-white' : 'text-zinc-300 hover:bg-white/10 hover:text-white' }}">
+                    <i data-lucide="git-compare-arrows" class="h-4 w-4"></i>
+                    Peta Jabatan SIASN
                 </a>
                 <a href="{{ route('cms.siasn.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="database-zap" class="h-4 w-4"></i>
@@ -590,8 +601,8 @@
             <header class="border-b border-zinc-200 bg-white">
                 <div class="flex w-full flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
                     <div>
-                        <h1 class="text-xl font-semibold tracking-tight">Peta Jabatan Real</h1>
-                        <p class="mt-1 text-sm text-zinc-500">Data struktur jabatan real dari portal TPP untuk seluruh SKPD.</p>
+                        <h1 class="text-xl font-semibold tracking-tight">{{ $pageTitle }}</h1>
+                        <p class="mt-1 text-sm text-zinc-500">{{ $pageDescription }}</p>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
                         <a href="{{ route('dashboard') }}" class="inline-flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50">
@@ -613,7 +624,7 @@
                     </div>
                 @endif
 
-                <div class="grid gap-4 md:grid-cols-5">
+                <div class="grid gap-4 {{ $isSiasnPage ? 'md:grid-cols-5' : 'md:grid-cols-4' }}">
                     <div class="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
                         <div class="flex items-center justify-between">
                             <p class="text-sm font-medium text-zinc-500">Status Fetch</p>
@@ -644,11 +655,13 @@
                         <p class="mt-1 text-xs text-zinc-500">Node jabatan TPP</p>
                     </div>
 
-                    <div class="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-                        <p class="text-sm font-medium text-zinc-500">Pegawai SIASN</p>
-                        <p class="mt-3 text-2xl font-semibold">{{ number_format($siasnEmployeeTotal) }}</p>
-                        <p class="mt-1 text-xs text-zinc-500">NIP unik dari import/SIASN</p>
-                    </div>
+                    @if ($isSiasnPage)
+                        <div class="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                            <p class="text-sm font-medium text-zinc-500">Pegawai SIASN</p>
+                            <p class="mt-3 text-2xl font-semibold">{{ number_format((int) $siasnEmployeeTotal) }}</p>
+                            <p class="mt-1 text-xs text-zinc-500">NIP aktif dari Excel SIASN</p>
+                        </div>
+                    @endif
 
                     <div class="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
                         <p class="text-sm font-medium text-zinc-500">Terakhir Simpan</p>
@@ -659,40 +672,49 @@
                     </div>
                 </div>
 
-                <form method="POST" action="{{ route('cms.peta-jabatan-real.fetch') }}" class="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-                    @csrf
-                    <div class="grid gap-4 lg:grid-cols-[1fr_160px_160px_auto] lg:items-end">
-                        <div>
-                            <h2 class="text-base font-semibold">Ambil Data TPP</h2>
-                            <p class="mt-1 text-sm text-zinc-500">Login sebagai superadmin, masuk ke SKPD satu per satu, lalu baca halaman /admin/jabatan.</p>
+                @if (! $isSiasnPage)
+                    <form method="POST" action="{{ route('cms.peta-jabatan-real.fetch') }}" class="mt-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                        @csrf
+                        <div class="grid gap-4 lg:grid-cols-[1fr_160px_160px_auto] lg:items-end">
+                            <div>
+                                <h2 class="text-base font-semibold">Ambil Data TPP</h2>
+                                <p class="mt-1 text-sm text-zinc-500">Login sebagai superadmin, masuk ke SKPD satu per satu, lalu baca halaman /admin/jabatan.</p>
+                            </div>
+                            <label class="block">
+                                <span class="text-xs font-semibold uppercase text-zinc-500">Dari SKPD</span>
+                                <input name="start_index" type="number" min="1" value="{{ old('start_index', $startIndex) }}" class="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm">
+                            </label>
+                            <label class="block">
+                                <span class="text-xs font-semibold uppercase text-zinc-500">Sampai SKPD</span>
+                                <input name="end_index" type="number" min="1" value="{{ old('end_index', $endIndex) }}" class="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm">
+                            </label>
+                            <button type="submit" class="inline-flex items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800">
+                                <i data-lucide="download-cloud" class="h-4 w-4"></i>
+                                Fetch
+                            </button>
                         </div>
-                        <label class="block">
-                            <span class="text-xs font-semibold uppercase text-zinc-500">Dari SKPD</span>
-                            <input name="start_index" type="number" min="1" value="{{ old('start_index', $startIndex) }}" class="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm">
-                        </label>
-                        <label class="block">
-                            <span class="text-xs font-semibold uppercase text-zinc-500">Sampai SKPD</span>
-                            <input name="end_index" type="number" min="1" value="{{ old('end_index', $endIndex) }}" class="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm">
-                        </label>
-                        <button type="submit" class="inline-flex items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800">
-                            <i data-lucide="download-cloud" class="h-4 w-4"></i>
-                            Fetch
-                        </button>
+                        @error('start_index')
+                            <p class="mt-3 text-sm text-rose-600">{{ $message }}</p>
+                        @enderror
+                        @error('end_index')
+                            <p class="mt-3 text-sm text-rose-600">{{ $message }}</p>
+                        @enderror
+                    </form>
+                @else
+                    <div class="mt-6 rounded-lg border border-cyan-200 bg-cyan-50 p-5 text-sm text-cyan-900 shadow-sm">
+                        <div>
+                            <h2 class="text-base font-semibold">Sumber Data SIASN</h2>
+                            <p class="mt-1">Halaman ini memakai Peta Jabatan Real tersimpan, Excel peta jabatan, dan pegawai aktif dari import Excel SIASN. Untuk memperbarui pegawai SIASN, import ulang Excel di halaman ASN.</p>
+                        </div>
                     </div>
-                    @error('start_index')
-                        <p class="mt-3 text-sm text-rose-600">{{ $message }}</p>
-                    @enderror
-                    @error('end_index')
-                        <p class="mt-3 text-sm text-rose-600">{{ $message }}</p>
-                    @enderror
-                </form>
+                @endif
 
                 <div class="mt-6 flex flex-wrap gap-2 border-b border-zinc-200">
-                    <a href="{{ route('cms.peta-jabatan-real.index', ['view' => 'tree', 'skpd' => $selectedSkpdKey]) }}" class="-mb-px inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold {{ $viewMode === 'tree' ? 'border-zinc-950 text-zinc-950' : 'border-transparent text-zinc-500 hover:text-zinc-900' }}">
+                    <a href="{{ route($indexRouteName, ['view' => 'tree', 'skpd' => $selectedSkpdKey]) }}" class="-mb-px inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold {{ $viewMode === 'tree' ? 'border-zinc-950 text-zinc-950' : 'border-transparent text-zinc-500 hover:text-zinc-900' }}">
                         <i data-lucide="network" class="h-4 w-4"></i>
                         Tree Chart
                     </a>
-                    <a href="{{ route('cms.peta-jabatan-real.index', ['view' => 'org', 'org_skpd' => $selectedOrgSkpdKey]) }}" class="-mb-px inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold {{ $viewMode === 'org' ? 'border-zinc-950 text-zinc-950' : 'border-transparent text-zinc-500 hover:text-zinc-900' }}">
+                    <a href="{{ route($indexRouteName, ['view' => 'org', 'org_skpd' => $selectedOrgSkpdKey]) }}" class="-mb-px inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold {{ $viewMode === 'org' ? 'border-zinc-950 text-zinc-950' : 'border-transparent text-zinc-500 hover:text-zinc-900' }}">
                         <i data-lucide="git-fork" class="h-4 w-4"></i>
                         Organizational Chart
                     </a>
@@ -734,7 +756,7 @@
                                 </div>
                                 <div class="max-h-[760px] overflow-auto p-2">
                                     @foreach ($orgSkpdGroups as $group)
-                                        <a href="{{ route('cms.peta-jabatan-real.index', ['view' => 'org', 'org_skpd' => $group['key']]) }}" class="block rounded-md px-3 py-2 text-sm {{ (string) $group['key'] === (string) ($selectedOrgGroup['key'] ?? '') ? 'bg-zinc-950 text-white' : 'hover:bg-zinc-100' }}">
+                                        <a href="{{ route($indexRouteName, ['view' => 'org', 'org_skpd' => $group['key']]) }}" class="block rounded-md px-3 py-2 text-sm {{ (string) $group['key'] === (string) ($selectedOrgGroup['key'] ?? '') ? 'bg-zinc-950 text-white' : 'hover:bg-zinc-100' }}">
                                             <span class="block font-semibold">{{ $group['label'] }}</span>
                                             <span class="mt-1 block text-xs {{ (string) $group['key'] === (string) ($selectedOrgGroup['key'] ?? '') ? 'text-zinc-300' : 'text-zinc-500' }}">
                                                 {{ number_format((int) ($group['summary']['sheets'] ?? 0)) }} sheet,
@@ -952,7 +974,7 @@
                         </div>
                     @endif
                 @else
-                    <form method="GET" action="{{ route('cms.peta-jabatan-real.index') }}" class="mt-6 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+                    <form method="GET" action="{{ route($indexRouteName) }}" class="mt-6 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
                         <input type="hidden" name="view" value="tree">
                         <div class="grid gap-4 lg:grid-cols-[1fr_360px_auto] lg:items-end">
                             <div>

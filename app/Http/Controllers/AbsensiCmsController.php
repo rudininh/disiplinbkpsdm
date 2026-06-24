@@ -272,13 +272,37 @@ class AbsensiCmsController extends Controller
 
         return view('absensi-cms.peta-jabatan-real', [
             'payload' => $payload,
-            'excelComparison' => $this->petaJabatanExcel->comparison($payload, $viewMode === 'org' ? null : $selectedSheet),
+            'excelComparison' => $this->petaJabatanExcel->comparison($payload, $viewMode === 'org' ? null : $selectedSheet, false),
+            'viewMode' => $viewMode,
+            'selectedSheet' => $selectedSheet,
+            'result' => null,
+            'startIndex' => 1,
+            'endIndex' => 35,
+            'pageMode' => 'real',
+            'pageTitle' => 'Peta Jabatan Real',
+            'pageDescription' => 'Data struktur jabatan real dari portal TPP untuk seluruh SKPD.',
+        ]);
+    }
+
+    public function petaJabatanSiasn(Request $request): View
+    {
+        $payload = $this->tppScraper->latestPetaJabatanReal();
+        $viewMode = (string) $request->input('view', 'tree');
+        $viewMode = in_array($viewMode, ['tree', 'org'], true) ? $viewMode : 'tree';
+        $selectedSheet = $request->filled('sheet') ? (int) $request->input('sheet') : 0;
+
+        return view('absensi-cms.peta-jabatan-real', [
+            'payload' => $payload,
+            'excelComparison' => $this->petaJabatanExcel->comparison($payload, $viewMode === 'org' ? null : $selectedSheet, true),
             'viewMode' => $viewMode,
             'selectedSheet' => $selectedSheet,
             'result' => null,
             'startIndex' => 1,
             'endIndex' => 35,
             'siasnEmployeeTotal' => $this->siasnEmployeeTotal(),
+            'pageMode' => 'siasn',
+            'pageTitle' => 'Peta Jabatan SIASN',
+            'pageDescription' => 'Peta jabatan yang menyesuaikan pegawai aktif SIASN dari import Excel, Peta Jabatan Excel, dan Peta Jabatan Real.',
         ]);
     }
 
@@ -295,7 +319,7 @@ class AbsensiCmsController extends Controller
 
             return view('absensi-cms.peta-jabatan-real', [
                 'payload' => $payload,
-                'excelComparison' => $this->petaJabatanExcel->comparison($payload, 0),
+                'excelComparison' => $this->petaJabatanExcel->comparison($payload, 0, false),
                 'viewMode' => 'tree',
                 'selectedSheet' => 0,
                 'result' => [
@@ -304,7 +328,9 @@ class AbsensiCmsController extends Controller
                 ],
                 'startIndex' => (int) ($data['start_index'] ?? 1),
                 'endIndex' => (int) ($data['end_index'] ?? 35),
-                'siasnEmployeeTotal' => $this->siasnEmployeeTotal(),
+                'pageMode' => 'real',
+                'pageTitle' => 'Peta Jabatan Real',
+                'pageDescription' => 'Data struktur jabatan real dari portal TPP untuk seluruh SKPD.',
             ]);
         }
 
@@ -317,13 +343,15 @@ class AbsensiCmsController extends Controller
 
         return view('absensi-cms.peta-jabatan-real', [
             'payload' => $result,
-            'excelComparison' => $this->petaJabatanExcel->comparison($result, 0),
+            'excelComparison' => $this->petaJabatanExcel->comparison($result, 0, false),
             'viewMode' => 'tree',
             'selectedSheet' => 0,
             'result' => $result,
             'startIndex' => (int) ($data['start_index'] ?? 1),
             'endIndex' => (int) ($data['end_index'] ?? 35),
-            'siasnEmployeeTotal' => $this->siasnEmployeeTotal(),
+            'pageMode' => 'real',
+            'pageTitle' => 'Peta Jabatan Real',
+            'pageDescription' => 'Data struktur jabatan real dari portal TPP untuk seluruh SKPD.',
         ]);
     }
 
