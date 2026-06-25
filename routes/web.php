@@ -38,6 +38,7 @@ Route::prefix('cms')->name('cms.')->group(function () {
     Route::post('/laporan-pppk/fetch', [AbsensiCmsController::class, 'fetchLaporanPppk'])->name('laporan-pppk.fetch');
     Route::get('/laporan-balai-kota', [AbsensiCmsController::class, 'laporanBalaiKota'])->name('laporan-balai-kota.index');
     Route::post('/laporan-balai-kota/fetch', [AbsensiCmsController::class, 'fetchLaporanBalaiKota'])->name('laporan-balai-kota.fetch');
+    Route::post('/laporan-balai-kota/fetch-cuti', [AbsensiCmsController::class, 'fetchLaporanBalaiKotaCuti'])->name('laporan-balai-kota.fetch-cuti');
 });
 
 Route::prefix('absensi-scraper')->name('absensi-scraper.')->group(function () {

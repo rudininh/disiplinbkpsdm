@@ -92,7 +92,7 @@
             </header>
 
             <section class="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
-                <div class="no-print mb-4 grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
+                <div class="no-print mb-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-[340px_340px_minmax(0,1fr)]">
                     <form method="POST" action="{{ route('cms.laporan-balai-kota.fetch') }}" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
                         @csrf
                         <div class="flex items-center gap-3 border-b border-zinc-200 pb-4">
@@ -125,6 +125,54 @@
                         <button type="submit" class="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800">
                             <i data-lucide="download-cloud" class="h-4 w-4"></i>
                             Ambil & Susun Laporan
+                        </button>
+                    </form>
+
+                    <form method="POST" action="{{ route('cms.laporan-balai-kota.fetch-cuti') }}" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                        @csrf
+                        <input type="hidden" name="date" value="{{ $date }}">
+                        <div class="flex items-center gap-3 border-b border-zinc-200 pb-4">
+                            <div class="flex h-9 w-9 items-center justify-center rounded-md bg-emerald-600 text-white">
+                                <i data-lucide="calendar-plus" class="h-4 w-4"></i>
+                            </div>
+                            <div>
+                                <h2 class="text-base font-semibold">Ambil Cuti Balai Kota</h2>
+                                <p class="text-sm text-zinc-500">Mengambil cuti hanya untuk SKPD lingkungan balai kota.</p>
+                            </div>
+                        </div>
+
+                        @if (is_array($cutiResult ?? null))
+                            <div class="mt-4 rounded-md border {{ ($cutiResult['success'] ?? false) ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800' }} px-3 py-2 text-sm">
+                                @if (! empty($cutiResult['message']))
+                                    <div class="font-medium">{{ $cutiResult['message'] }}</div>
+                                @else
+                                    <div class="font-medium">Tersimpan {{ number_format($cutiResult['summary']['stored_rows'] ?? 0) }} baris cuti.</div>
+                                    <div class="mt-1 text-xs">Berhasil {{ $cutiResult['summary']['success_count'] ?? 0 }} SKPD, gagal {{ $cutiResult['summary']['failed_count'] ?? 0 }} SKPD.</div>
+                                @endif
+                            </div>
+                        @endif
+
+                        <div class="mt-5 grid gap-3 sm:grid-cols-2">
+                            <div>
+                                <label class="block text-sm font-medium text-zinc-700" for="balai_cuti_date_start">Tanggal Awal</label>
+                                <input id="balai_cuti_date_start" name="date_start" type="date" value="{{ old('date_start', $dateStart ?? $date) }}" required
+                                    class="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-zinc-700" for="balai_cuti_date_end">Tanggal Akhir</label>
+                                <input id="balai_cuti_date_end" name="date_end" type="date" value="{{ old('date_end', $dateEnd ?? $date) }}" required
+                                    class="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100">
+                            </div>
+                        </div>
+
+                        <label class="mt-4 flex items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm text-zinc-700">
+                            <input type="checkbox" name="redact" value="1" class="h-4 w-4 rounded border-zinc-300 text-cyan-700 focus:ring-cyan-600">
+                            Samarkan kolom sensitif sebelum simpan
+                        </label>
+
+                        <button type="submit" class="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">
+                            <i data-lucide="download-cloud" class="h-4 w-4"></i>
+                            Ambil & Simpan Cuti
                         </button>
                     </form>
 

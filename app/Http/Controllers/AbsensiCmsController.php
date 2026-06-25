@@ -487,6 +487,9 @@ class AbsensiCmsController extends Controller
             'totals' => $this->balaiKotaTotals($rows),
             'details' => $this->balaiKotaDetailRows($date),
             'result' => null,
+            'cutiResult' => null,
+            'dateStart' => $request->input('date_start', $date),
+            'dateEnd' => $request->input('date_end', $date),
         ]);
     }
 
@@ -538,6 +541,53 @@ class AbsensiCmsController extends Controller
                 ],
                 'results' => $results,
             ],
+            'cutiResult' => null,
+            'dateStart' => $data['date'],
+            'dateEnd' => $data['date'],
+        ]);
+    }
+
+    public function fetchLaporanBalaiKotaCuti(Request $request): View
+    {
+        $data = $request->validate([
+            'date' => ['nullable', 'date'],
+            'date_start' => ['required', 'date'],
+            'date_end' => ['required', 'date', 'after_or_equal:date_start'],
+            'redact' => ['nullable', 'boolean'],
+        ]);
+        $date = (string) ($data['date'] ?? $data['date_end']);
+        $credentials = $this->absensiCredentials();
+
+        $cutiResult = $credentials === null
+            ? [
+                'success' => false,
+                'message' => 'ABSENSI_USERNAME dan ABSENSI_PASSWORD belum diatur di .env.',
+                'summary' => [
+                    'success_count' => 0,
+                    'failed_count' => 0,
+                    'stored_rows' => 0,
+                ],
+            ]
+            : $this->scraper->scrapeSelectedSkpdCuti(
+                $credentials['username'],
+                $credentials['password'],
+                $this->balaiKotaSkpdIds(),
+                $request->boolean('redact', false),
+                $data['date_start'],
+                $data['date_end']
+            );
+
+        $rows = $this->balaiKotaReportRows($date);
+
+        return view('absensi-cms.laporan-balai-kota', [
+            'date' => $date,
+            'rows' => $rows,
+            'totals' => $this->balaiKotaTotals($rows),
+            'details' => $this->balaiKotaDetailRows($date),
+            'result' => null,
+            'cutiResult' => $cutiResult,
+            'dateStart' => $data['date_start'],
+            'dateEnd' => $data['date_end'],
         ]);
     }
 
@@ -754,6 +804,15 @@ class AbsensiCmsController extends Controller
             $personReportDates = $reportDates
                 ->reject(fn (string $date) => $this->isNonWorkingDateForPerson($date, $person))
                 ->values();
+
+            if (($person['source'] ?? 'PNS') === 'PNS' && $this->isPnsTugasBelajarJabatan($person['jabatan'] ?? null)) {
+                $dailyStatusRows->push([
+                    ...$person,
+                    'status' => 'Tugas/Cuti',
+                ]);
+
+                continue;
+            }
 
             foreach ($personReportDates as $date) {
                 $daily = $personDailyRows->first(fn (AbsensiDailyReport $row) => optional($row->tanggal)->format('Y-m-d') === $date);
@@ -1311,7 +1370,7 @@ class AbsensiCmsController extends Controller
                     ->values();
                 $hadir = $hadirNips->count();
                 $tidakHadirNips = $nips->diff($hadirNips)->values();
-                $tugasCuti = $this->balaiKotaTugasCutiCount($unit, $date, $tidakHadirNips->all());
+                $tugasCuti = $this->balaiKotaTugasCutiCount($unit, $date, $tidakHadirNips->all(), $pegawaiRows, $dailyRows);
                 $tidakHadir = max(0, $jumlahAsn - $hadir);
                 $tanpaKeterangan = max(0, $tidakHadir - $tugasCuti);
 
@@ -1336,8 +1395,10 @@ class AbsensiCmsController extends Controller
             ->whereIn('skpd_id', $unit['skpd_ids']);
 
         if (isset($unit['unit_kerja'])) {
-            $nips = AbsensiPegawai::query()
-                ->where('unit_kerja', $unit['unit_kerja'])
+            $nips = $this->balaiKotaPegawaiUnitQuery(
+                $this->balaiKotaPegawaiSkpdQuery(AbsensiPegawai::query(), $unit),
+                $unit
+            )
                 ->pluck('nip')
                 ->map(fn ($nip) => $this->normalizeNip($nip))
                 ->filter()
@@ -1360,23 +1421,13 @@ class AbsensiCmsController extends Controller
 
     private function balaiKotaPegawaiRows(array $unit)
     {
-        $query = AbsensiPegawai::query()
-            ->whereNotNull('nip')
-            ->where(function ($builder) use ($unit) {
-                foreach ($unit['skpd_ids'] as $skpdId) {
-                    $skpd = $this->skpdMap()[$skpdId] ?? [];
-                    if (! empty($skpd['kode'])) {
-                        $builder->orWhere('skpd', 'like', '%' . $skpd['kode'] . '%');
-                    }
-
-                    if (! empty($skpd['nama'])) {
-                        $builder->orWhere('skpd', 'like', '%' . $skpd['nama'] . '%');
-                    }
-                }
-            });
+        $query = $this->balaiKotaPegawaiSkpdQuery(
+            AbsensiPegawai::query()->whereNotNull('nip'),
+            $unit
+        );
 
         if (isset($unit['unit_kerja'])) {
-            $query->where('unit_kerja', $unit['unit_kerja']);
+            $this->balaiKotaPegawaiUnitQuery($query, $unit);
         } elseif (isset($unit['jabatan_contains'])) {
             $needles = (array) $unit['jabatan_contains'];
             $query->where(function ($builder) use ($needles) {
@@ -1387,6 +1438,59 @@ class AbsensiCmsController extends Controller
         }
 
         return $query->get();
+    }
+
+    private function balaiKotaPegawaiSkpdQuery($query, array $unit)
+    {
+        return $query->where(function ($builder) use ($unit) {
+            foreach ($unit['skpd_ids'] as $skpdId) {
+                $skpd = $this->skpdMap()[$skpdId] ?? [];
+                if (! empty($skpd['kode'])) {
+                    $builder->orWhere('skpd', 'like', '%' . $skpd['kode'] . '%');
+                }
+
+                if (! empty($skpd['nama'])) {
+                    $builder->orWhere('skpd', 'like', '%' . $skpd['nama'] . '%');
+                }
+            }
+        });
+    }
+
+    private function balaiKotaPegawaiUnitQuery($query, array $unit)
+    {
+        $variants = $this->balaiKotaUnitKerjaVariants((string) $unit['unit_kerja']);
+
+        return $query->whereIn('unit_kerja', $variants);
+    }
+
+    private function balaiKotaUnitKerjaVariants(string $unitKerja): array
+    {
+        $unitKerja = trim($unitKerja);
+        $variants = [$unitKerja, Str::upper($unitKerja)];
+
+        $bagianPrefix = 'Sekretariat Daerah - Bagian ';
+        $asistenPrefix = 'Sekretariat Daerah - Asisten ';
+
+        if (str_starts_with($unitKerja, $bagianPrefix)) {
+            $short = trim(substr($unitKerja, strlen($bagianPrefix)));
+            $variants[] = $short;
+            $variants[] = 'Bagian ' . $short;
+            $variants[] = Str::upper('Bagian ' . $short);
+        }
+
+        if (str_starts_with($unitKerja, $asistenPrefix)) {
+            $short = trim(substr($unitKerja, strlen($asistenPrefix)));
+            $variants[] = $short;
+            $variants[] = 'Asisten ' . $short;
+            $variants[] = Str::upper('Asisten ' . $short);
+        }
+
+        return collect($variants)
+            ->map(fn (string $value) => trim($value))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
     }
 
     private function balaiKotaPppkRows(array $unit, string $date)
@@ -1443,7 +1547,7 @@ class AbsensiCmsController extends Controller
         return $query->get();
     }
 
-    private function balaiKotaTugasCutiCount(array $unit, string $date, array $nips): int
+    private function balaiKotaTugasCutiCount(array $unit, string $date, array $nips, $pegawaiRows = null, $dailyRows = null): int
     {
         if ($nips === []) {
             return 0;
@@ -1456,7 +1560,26 @@ class AbsensiCmsController extends Controller
             ->unique()
             ->values();
 
-        return $cutiNips->intersect($nips)->count();
+        return $cutiNips
+            ->merge($this->pnsTugasBelajarNips($pegawaiRows, $dailyRows))
+            ->intersect($nips)
+            ->unique()
+            ->count();
+    }
+
+    private function pnsTugasBelajarNips($pegawaiRows, $dailyRows)
+    {
+        $pegawaiRows = collect($pegawaiRows);
+        $dailyRows = collect($dailyRows);
+        $rows = $pegawaiRows->isNotEmpty() ? $pegawaiRows : $dailyRows;
+
+        return $rows
+            ->filter(fn ($row) => $this->isPnsTugasBelajarJabatan($row->jabatan ?? null))
+            ->pluck('nip')
+            ->map(fn ($nip) => $this->normalizeNip($nip))
+            ->filter()
+            ->unique()
+            ->values();
     }
 
     private function balaiKotaCutiRows(array $unit, string $date)
@@ -1555,10 +1678,11 @@ class AbsensiCmsController extends Controller
                             default => 'PNS',
                         };
                         $isActive = $this->hasActiveJabatan($jabatan);
+                        $isPnsTugasBelajar = $source === 'PNS' && $this->isPnsTugasBelajarJabatan($jabatan);
                         $status = $source === 'PPPK Paruh Waktu'
                             ? 'Belum Wajib Absen'
                             : ($isActive
-                            ? ($hadir ? 'Hadir' : ($cuti instanceof AbsensiCutiReport ? 'Tugas/Cuti' : 'Tanpa Keterangan'))
+                            ? ($hadir ? 'Hadir' : (($cuti instanceof AbsensiCutiReport || $isPnsTugasBelajar) ? 'Tugas/Cuti' : 'Tanpa Keterangan'))
                             : 'Pegawai Tidak Aktif');
 
                         return [
@@ -1568,7 +1692,7 @@ class AbsensiCmsController extends Controller
                             'pangkat' => $pangkat,
                             'source' => $source,
                             'apel' => $daily instanceof AbsensiDailyReport ? (string) $daily->apel : ($pppk instanceof AbsensiPppkReport ? (string) $pppk->jam_masuk : '-'),
-                            'jenis_cuti' => $cuti instanceof AbsensiCutiReport ? (string) $cuti->jenis_cuti : '-',
+                            'jenis_cuti' => $cuti instanceof AbsensiCutiReport ? (string) $cuti->jenis_cuti : ($isPnsTugasBelajar ? 'PNS TUGAS BELAJAR' : '-'),
                             'tanggal_cuti' => $cuti instanceof AbsensiCutiReport
                                 ? trim(optional($cuti->tanggal_mulai)->format('Y-m-d') . ' s/d ' . optional($cuti->tanggal_selesai)->format('Y-m-d'))
                                 : '-',
@@ -1625,6 +1749,11 @@ class AbsensiCmsController extends Controller
         $value = trim((string) $value);
 
         return $value !== '' && $value !== '-';
+    }
+
+    private function isPnsTugasBelajarJabatan(?string $value): bool
+    {
+        return Str::of((string) $value)->upper()->squish()->toString() === 'PNS TUGAS BELAJAR';
     }
 
     private function isFilledValue(?string $value): bool

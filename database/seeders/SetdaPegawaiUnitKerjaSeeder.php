@@ -9,11 +9,34 @@ class SetdaPegawaiUnitKerjaSeeder extends Seeder
 {
     public function run(): void
     {
+        foreach ($this->canonicalUnitNames() as $source => $target) {
+            AbsensiPegawai::query()
+                ->where('skpd', 'like', '%Sekretariat Daerah%')
+                ->where('unit_kerja', $source)
+                ->update(['unit_kerja' => $target]);
+        }
+
         foreach ($this->rows() as [$nip, $nama, $unitKerja]) {
             AbsensiPegawai::query()
                 ->where('nip', $nip)
                 ->update(['unit_kerja' => $unitKerja]);
         }
+    }
+
+    private function canonicalUnitNames(): array
+    {
+        return [
+            'SEKRETARIAT DAERAH' => 'Sekretariat Daerah',
+            'BAGIAN UMUM' => 'Sekretariat Daerah - Bagian Umum',
+            'BAGIAN ADMINISTRASI PEMBANGUNAN' => 'Sekretariat Daerah - Bagian Administrasi Pembangunan',
+            'BAGIAN KESEJAHTERAAN RAKYAT' => 'Sekretariat Daerah - Bagian Kesejahteraan Rakyat',
+            'BAGIAN PEMERINTAHAN' => 'Sekretariat Daerah - Bagian Pemerintahan',
+            'BAGIAN HUKUM' => 'Sekretariat Daerah - Bagian Hukum',
+            'BAGIAN ORGANISASI' => 'Sekretariat Daerah - Bagian Organisasi',
+            'BAGIAN PEREKONOMIAN DAN SUMBER DAYA ALAM' => 'Sekretariat Daerah - Bagian Perekonomian dan Sumber Daya Alam',
+            'BAGIAN PENGADAAN BARANG DAN JASA' => 'Sekretariat Daerah - Bagian Pengadaan Barang dan Jasa',
+            'BAGIAN PROTOKOL DAN KOMUNIKASI PIMPINAN' => 'Sekretariat Daerah - Bagian Protokol dan Komunikasi Pimpinan',
+        ];
     }
 
     private function rows(): array

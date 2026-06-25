@@ -213,6 +213,139 @@ class AbsensiScraperService
         ];
     }
 
+    public function scrapeSelectedSkpdCuti(
+        string $username,
+        string $password,
+        array $skpdIds,
+        bool $redact = false,
+        ?string $dateStart = null,
+        ?string $dateEnd = null
+    ): array {
+        $skpdIds = collect($skpdIds)
+            ->map(fn ($skpdId) => (int) $skpdId)
+            ->filter(fn (int $skpdId) => $skpdId > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($skpdIds === []) {
+            return [
+                'success' => false,
+                'partial_success' => false,
+                'message' => 'Tidak ada SKPD yang dipilih untuk ambil data cuti.',
+                'login' => null,
+                'range' => [
+                    'date_start' => $dateStart,
+                    'date_end' => $dateEnd,
+                    'skpd_ids' => [],
+                ],
+                'summary' => [
+                    'success_count' => 0,
+                    'failed_count' => 0,
+                    'stored_rows' => 0,
+                ],
+                'results' => [],
+            ];
+        }
+
+        $this->resetPortalSession();
+        $auth = $this->authenticatePortal($username, $password);
+        if ($message = $this->loginFailureMessage($auth)) {
+            return [
+                'success' => false,
+                'partial_success' => false,
+                'message' => $message,
+                'login' => [
+                    'status_code' => $auth['response']->getStatusCode(),
+                    'redirect_history' => $this->redirectHistory($auth['response']),
+                    'body_preview' => $this->preview($auth['body']),
+                ],
+                'range' => [
+                    'date_start' => $dateStart,
+                    'date_end' => $dateEnd,
+                    'skpd_ids' => $skpdIds,
+                ],
+                'summary' => [
+                    'success_count' => 0,
+                    'failed_count' => count($skpdIds),
+                    'stored_rows' => 0,
+                ],
+                'results' => [],
+            ];
+        }
+
+        $skpdActions = $this->fetchSkpdLoginActions(min($skpdIds), max($skpdIds));
+        $results = [];
+        $stored = 0;
+        $successCount = 0;
+        $failedCount = 0;
+
+        foreach ($skpdIds as $index => $skpdId) {
+            try {
+                if ($index > 0) {
+                    $this->resetPortalSession();
+                    $this->authenticatePortal($username, $password);
+                }
+
+                $skpdLogin = $this->loginAsSkpd($skpdId, $skpdActions[$skpdId] ?? null);
+                $cuti = $this->getCutiDataForRange($redact, $skpdId, $dateStart, $dateEnd, true);
+                $isSuccess = (bool) ($cuti['success'] ?? false);
+                $storedForSkpd = (int) ($cuti['stored_rows'] ?? 0);
+
+                $results[] = [
+                    'skpd_id' => $skpdId,
+                    'success' => $isSuccess,
+                    'stored_rows' => $storedForSkpd,
+                    'skpd_login' => [
+                        'success' => $skpdLogin['success'] ?? false,
+                        'path' => $skpdLogin['path'] ?? null,
+                        'status_code' => $skpdLogin['status_code'] ?? null,
+                        'action' => $skpdLogin['action'] ?? null,
+                    ],
+                    'page' => $cuti['page'] ?? null,
+                    'message' => $cuti['message'] ?? null,
+                ];
+
+                $stored += $storedForSkpd;
+                $isSuccess ? $successCount++ : $failedCount++;
+            } catch (Throwable $throwable) {
+                $failedCount++;
+                $results[] = [
+                    'skpd_id' => $skpdId,
+                    'success' => false,
+                    'stored_rows' => 0,
+                    'message' => $throwable->getMessage(),
+                ];
+
+                Log::error('Absensi selected SKPD cuti fetch failed', [
+                    'skpd_id' => $skpdId,
+                    'message' => $throwable->getMessage(),
+                ]);
+            }
+        }
+
+        return [
+            'success' => $successCount > 0 && $failedCount === 0,
+            'partial_success' => $successCount > 0 && $failedCount > 0,
+            'login' => [
+                'status_code' => $auth['response']->getStatusCode(),
+                'redirect_history' => $this->redirectHistory($auth['response']),
+                'body_preview' => $this->preview($auth['body']),
+            ],
+            'range' => [
+                'date_start' => $dateStart,
+                'date_end' => $dateEnd,
+                'skpd_ids' => $skpdIds,
+            ],
+            'summary' => [
+                'success_count' => $successCount,
+                'failed_count' => $failedCount,
+                'stored_rows' => $stored,
+            ],
+            'results' => $results,
+        ];
+    }
+
     public function scrapePegawai(string $username, string $password): array
     {
         $auth = $this->authenticatePortal($username, $password);
