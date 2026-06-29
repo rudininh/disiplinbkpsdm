@@ -1,10 +1,10 @@
 {
     "meta": {
         "path": "/admin/cuti",
-        "skpd_id": 25,
-        "date_start": "2026-06-25",
-        "date_end": "2026-06-25",
-        "fetched_at": "2026-06-25T01:49:18.081166Z",
+        "skpd_id": 35,
+        "date_start": "2026-06-29",
+        "date_end": "2026-06-29",
+        "fetched_at": "2026-06-29T01:47:07.550797Z",
         "redacted": false
     },
     "cuti": {
@@ -23,36 +23,8 @@
                     "Keterangan",
                     "Aksi"
                 ],
-                "row_count": 1,
-                "rows": [
-                    {
-                        "#": "1",
-                        "NIP/Nama": "Selvia Astuty, S.Ak198405272010012014",
-                        "Tgl Mulai": "24 Juni 2026",
-                        "Tgl Selesai": "26 Juni 2026",
-                        "Jenis": "Cuti Tahunan",
-                        "Dokumen": "Upload",
-                        "Keterangan": "Cuti Tahunan",
-                        "Aksi": "Rekap Delete",
-                        "_links": [
-                            {
-                                "header": "Dokumen",
-                                "label": "Upload",
-                                "url": "https://absensi.banjarmasinkota.go.id/admin/cuti/upload/130336"
-                            },
-                            {
-                                "header": "Aksi",
-                                "label": "Rekap",
-                                "url": "https://absensi.banjarmasinkota.go.id/admin/cuti/130336/rekap"
-                            }
-                        ],
-                        "_upload": {
-                            "header": "Dokumen",
-                            "label": "Upload",
-                            "url": "https://absensi.banjarmasinkota.go.id/admin/cuti/upload/130336"
-                        }
-                    }
-                ]
+                "row_count": 0,
+                "rows": []
             }
         ]
     }

@@ -1383,7 +1383,20 @@ class AbsensiScraperService
         })->first();
 
         if ($reportTable->count() > 0) {
-            $reportTable->filter('tr')->each(function (Crawler $row) use (&$rows) {
+            $headers = [];
+            $reportTable->filter('tr')->first()->filter('td,th')->each(function (Crawler $cell) use (&$headers) {
+                $headers[] = $this->normalizeText(implode(' ', $this->cellLines($cell)));
+            });
+
+            $namaNipIndex = $this->dailyReportColumnIndex($headers, ['nama', 'nip'], 1);
+            $pangkatIndex = $this->dailyReportColumnIndex($headers, ['pangkat'], 2);
+            $jabatanIndex = $this->dailyReportColumnIndex($headers, ['jabatan'], 3);
+            $pagiIndex = $this->dailyReportColumnIndex($headers, ['pagi'], 4);
+            $pulangIndex = $this->dailyReportColumnIndex($headers, ['pulang'], 5);
+            $apelIndex = $this->dailyReportColumnIndex($headers, ['apel'], 6);
+            $apelHariBesarIndex = $this->dailyReportColumnIndex($headers, ['hari', 'besar'], null);
+
+            $reportTable->filter('tr')->each(function (Crawler $row) use (&$rows, $namaNipIndex, $pangkatIndex, $jabatanIndex, $pagiIndex, $pulangIndex, $apelIndex, $apelHariBesarIndex) {
                 $cells = [];
                 $row->filter('td,th')->each(function (Crawler $cell) use (&$cells) {
                     $cells[] = $this->cellLines($cell);
@@ -1394,17 +1407,20 @@ class AbsensiScraperService
                     return;
                 }
 
-                [$nama, $nip] = $this->splitNameAndNip($cells[1] ?? []);
+                [$nama, $nip] = $this->splitNameAndNip($cells[$namaNipIndex] ?? []);
 
                 $rows[] = [
                     'nomor' => $first,
                     'nama_pegawai' => $nama,
                     'nip' => $nip,
-                    'pangkat' => $this->normalizeText(implode(' ', $cells[2] ?? [])),
-                    'jabatan' => $this->normalizeText(implode(' ', $cells[3] ?? [])),
-                    'pagi' => $this->normalizeText($cells[4][0] ?? ''),
-                    'pulang' => $this->normalizeText($cells[5][0] ?? ''),
-                    'apel' => $this->normalizeText($cells[6][0] ?? ''),
+                    'pangkat' => $this->normalizeText(implode(' ', $cells[$pangkatIndex] ?? [])),
+                    'jabatan' => $this->normalizeText(implode(' ', $cells[$jabatanIndex] ?? [])),
+                    'pagi' => $this->normalizeText($cells[$pagiIndex][0] ?? ''),
+                    'pulang' => $this->normalizeText($cells[$pulangIndex][0] ?? ''),
+                    'apel' => $this->normalizeText($cells[$apelIndex][0] ?? ''),
+                    'apel_hari_besar' => $apelHariBesarIndex === null
+                        ? null
+                        : $this->normalizeText($cells[$apelHariBesarIndex][0] ?? ''),
                 ];
             });
         }
@@ -1422,6 +1438,27 @@ class AbsensiScraperService
             'row_count' => count($rows),
             'rows' => $rows,
         ];
+    }
+
+    protected function dailyReportColumnIndex(array $headers, array $needles, ?int $fallback): ?int
+    {
+        foreach ($headers as $index => $header) {
+            $value = strtolower($this->normalizeText((string) $header));
+            $matches = true;
+
+            foreach ($needles as $needle) {
+                if (! str_contains($value, strtolower((string) $needle))) {
+                    $matches = false;
+                    break;
+                }
+            }
+
+            if ($matches) {
+                return $index;
+            }
+        }
+
+        return $fallback;
     }
 
     protected function storeDailyReportRows(array $report, array $meta): int
@@ -1458,6 +1495,7 @@ class AbsensiScraperService
                     'pagi' => $row['pagi'] ?: null,
                     'pulang' => $row['pulang'] ?: null,
                     'apel' => $row['apel'] ?: null,
+                    'apel_hari_besar' => ($row['apel_hari_besar'] ?? null) ?: null,
                     'row_data' => $row,
                     'fetched_at' => $meta['fetched_at'] ?? now(),
                 ]

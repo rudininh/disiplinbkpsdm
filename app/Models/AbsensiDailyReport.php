@@ -19,6 +19,7 @@ class AbsensiDailyReport extends Model
         'pagi',
         'pulang',
         'apel',
+        'apel_hari_besar',
         'row_data',
         'row_hash',
         'fetched_at',

@@ -300,7 +300,7 @@ class AbsensiCmsController extends Controller
             'startIndex' => 1,
             'endIndex' => 35,
             'siasnEmployeeTotal' => $this->siasnEmployeeTotal(),
-            'activeSiasnEmployeeLookup' => $this->activeSiasnEmployeeLookup(),
+            'activeSiasnEmployeeLookup' => $this->activeSiasnEmployeeLookup($payload),
             'pageMode' => 'siasn',
             'pageTitle' => 'Peta Jabatan SIASN',
             'pageDescription' => 'Peta jabatan yang menyesuaikan pegawai aktif SIASN dari import Excel, Peta Jabatan Excel, dan Peta Jabatan Real.',
@@ -487,6 +487,7 @@ class AbsensiCmsController extends Controller
             'totals' => $this->balaiKotaTotals($rows),
             'details' => $this->balaiKotaDetailRows($date),
             'result' => null,
+            'hariBesarResult' => null,
             'cutiResult' => null,
             'dateStart' => $request->input('date_start', $date),
             'dateEnd' => $request->input('date_end', $date),
@@ -541,6 +542,63 @@ class AbsensiCmsController extends Controller
                 ],
                 'results' => $results,
             ],
+            'hariBesarResult' => null,
+            'cutiResult' => null,
+            'dateStart' => $data['date'],
+            'dateEnd' => $data['date'],
+        ]);
+    }
+
+    public function fetchLaporanBalaiKotaHariBesar(Request $request): View
+    {
+        $data = $request->validate([
+            'date' => ['required', 'date'],
+        ]);
+        $credentials = $this->absensiCredentials();
+        $results = [];
+        $stored = 0;
+        $successCount = 0;
+        $failedCount = 0;
+
+        foreach ($this->balaiKotaSkpdIds() as $skpdId) {
+            $result = $this->scraper->scrapeDailyReports(
+                $credentials['username'],
+                $credentials['password'],
+                $data['date'],
+                $data['date'],
+                $skpdId,
+                $skpdId
+            );
+
+            $summary = $result['summary'] ?? [];
+            $stored += (int) ($summary['stored_rows'] ?? 0);
+            $successCount += (int) ($summary['success_count'] ?? 0);
+            $failedCount += (int) ($summary['failed_count'] ?? 0);
+            $results[] = [
+                'skpd_id' => $skpdId,
+                'success' => (bool) ($result['success'] ?? false),
+                'summary' => $summary,
+            ];
+        }
+
+        $rows = $this->balaiKotaReportRows($data['date']);
+
+        return view('absensi-cms.laporan-balai-kota', [
+            'date' => $data['date'],
+            'rows' => $rows,
+            'totals' => $this->balaiKotaTotals($rows),
+            'details' => $this->balaiKotaDetailRows($data['date']),
+            'result' => null,
+            'hariBesarResult' => [
+                'success' => $failedCount === 0,
+                'summary' => [
+                    'success_count' => $successCount,
+                    'failed_count' => $failedCount,
+                    'stored_rows' => $stored,
+                    'filled_rows' => $this->balaiKotaApelHariBesarRowsCount($data['date']),
+                ],
+                'results' => $results,
+            ],
             'cutiResult' => null,
             'dateStart' => $data['date'],
             'dateEnd' => $data['date'],
@@ -585,9 +643,175 @@ class AbsensiCmsController extends Controller
             'totals' => $this->balaiKotaTotals($rows),
             'details' => $this->balaiKotaDetailRows($date),
             'result' => null,
+            'hariBesarResult' => null,
             'cutiResult' => $cutiResult,
             'dateStart' => $data['date_start'],
             'dateEnd' => $data['date_end'],
+        ]);
+    }
+
+    public function laporanApelSkpd(Request $request): View
+    {
+        $date = (string) $request->input('date', now()->toDateString());
+        $selectedSkpdIds = $this->selectedApelSkpdIds($request, true);
+        $rows = $this->apelSkpdReportRows($date, $selectedSkpdIds);
+
+        return view('absensi-cms.laporan-balai-kota', [
+            'date' => $date,
+            'rows' => $rows,
+            'totals' => $this->balaiKotaTotals($rows),
+            'details' => $this->apelSkpdDetailRows($date, $selectedSkpdIds),
+            'result' => null,
+            'hariBesarResult' => null,
+            'cutiResult' => null,
+            'dateStart' => $request->input('date_start', $date),
+            'dateEnd' => $request->input('date_end', $date),
+            'pageMode' => 'apel-skpd',
+            'pageTitle' => 'Laporan Apel SKPD',
+            'pageDescription' => 'Rekap apel SKPD terpilih dengan pencocokan cuti, tugas luar, sakit, dan diklat.',
+            'reportScopeLabel' => 'SKPD',
+            'printSubject' => 'Apel Pagi / Apel Hari Besar SKPD',
+            'fetchRoute' => 'cms.laporan-apel-skpd.fetch',
+            'fetchHariBesarRoute' => 'cms.laporan-apel-skpd.fetch-hari-besar',
+            'fetchCutiRoute' => 'cms.laporan-apel-skpd.fetch-cuti',
+            'indexRoute' => 'cms.laporan-apel-skpd.index',
+            'showSkpdSelector' => true,
+            'skpdOptions' => $this->apelSkpdOptions(),
+            'selectedSkpdIds' => $selectedSkpdIds,
+        ]);
+    }
+
+    public function fetchLaporanApelSkpd(Request $request): View
+    {
+        $data = $request->validate([
+            'date' => ['required', 'date'],
+            'skpd_ids' => ['required', 'array', 'min:1'],
+            'skpd_ids.*' => ['integer', 'min:1'],
+        ]);
+        $selectedSkpdIds = $this->selectedApelSkpdIds($request, false);
+        $result = $this->fetchSelectedDailyReports($selectedSkpdIds, $data['date']);
+        $rows = $this->apelSkpdReportRows($data['date'], $selectedSkpdIds);
+
+        return view('absensi-cms.laporan-balai-kota', [
+            'date' => $data['date'],
+            'rows' => $rows,
+            'totals' => $this->balaiKotaTotals($rows),
+            'details' => $this->apelSkpdDetailRows($data['date'], $selectedSkpdIds),
+            'result' => $result,
+            'hariBesarResult' => null,
+            'cutiResult' => null,
+            'dateStart' => $data['date'],
+            'dateEnd' => $data['date'],
+            'pageMode' => 'apel-skpd',
+            'pageTitle' => 'Laporan Apel SKPD',
+            'pageDescription' => 'Rekap apel SKPD terpilih dengan pencocokan cuti, tugas luar, sakit, dan diklat.',
+            'reportScopeLabel' => 'SKPD',
+            'printSubject' => 'Apel Pagi / Apel Hari Besar SKPD',
+            'fetchRoute' => 'cms.laporan-apel-skpd.fetch',
+            'fetchHariBesarRoute' => 'cms.laporan-apel-skpd.fetch-hari-besar',
+            'fetchCutiRoute' => 'cms.laporan-apel-skpd.fetch-cuti',
+            'indexRoute' => 'cms.laporan-apel-skpd.index',
+            'showSkpdSelector' => true,
+            'skpdOptions' => $this->apelSkpdOptions(),
+            'selectedSkpdIds' => $selectedSkpdIds,
+        ]);
+    }
+
+    public function fetchLaporanApelSkpdHariBesar(Request $request): View
+    {
+        $data = $request->validate([
+            'date' => ['required', 'date'],
+            'skpd_ids' => ['required', 'array', 'min:1'],
+            'skpd_ids.*' => ['integer', 'min:1'],
+        ]);
+        $selectedSkpdIds = $this->selectedApelSkpdIds($request, false);
+        $result = $this->fetchSelectedDailyReports($selectedSkpdIds, $data['date']);
+        $rows = $this->apelSkpdReportRows($data['date'], $selectedSkpdIds);
+
+        $result['summary']['filled_rows'] = $this->apelHariBesarRowsCount($data['date'], $selectedSkpdIds);
+
+        return view('absensi-cms.laporan-balai-kota', [
+            'date' => $data['date'],
+            'rows' => $rows,
+            'totals' => $this->balaiKotaTotals($rows),
+            'details' => $this->apelSkpdDetailRows($data['date'], $selectedSkpdIds),
+            'result' => null,
+            'hariBesarResult' => $result,
+            'cutiResult' => null,
+            'dateStart' => $data['date'],
+            'dateEnd' => $data['date'],
+            'pageMode' => 'apel-skpd',
+            'pageTitle' => 'Laporan Apel SKPD',
+            'pageDescription' => 'Rekap apel SKPD terpilih dengan pencocokan cuti, tugas luar, sakit, dan diklat.',
+            'reportScopeLabel' => 'SKPD',
+            'printSubject' => 'Apel Pagi / Apel Hari Besar SKPD',
+            'fetchRoute' => 'cms.laporan-apel-skpd.fetch',
+            'fetchHariBesarRoute' => 'cms.laporan-apel-skpd.fetch-hari-besar',
+            'fetchCutiRoute' => 'cms.laporan-apel-skpd.fetch-cuti',
+            'indexRoute' => 'cms.laporan-apel-skpd.index',
+            'showSkpdSelector' => true,
+            'skpdOptions' => $this->apelSkpdOptions(),
+            'selectedSkpdIds' => $selectedSkpdIds,
+        ]);
+    }
+
+    public function fetchLaporanApelSkpdCuti(Request $request): View
+    {
+        $data = $request->validate([
+            'date' => ['nullable', 'date'],
+            'date_start' => ['required', 'date'],
+            'date_end' => ['required', 'date', 'after_or_equal:date_start'],
+            'redact' => ['nullable', 'boolean'],
+            'skpd_ids' => ['required', 'array', 'min:1'],
+            'skpd_ids.*' => ['integer', 'min:1'],
+        ]);
+        $date = (string) ($data['date'] ?? $data['date_end']);
+        $selectedSkpdIds = $this->selectedApelSkpdIds($request, false);
+        $credentials = $this->absensiCredentials();
+
+        $cutiResult = $credentials === null
+            ? [
+                'success' => false,
+                'message' => 'ABSENSI_USERNAME dan ABSENSI_PASSWORD belum diatur di .env.',
+                'summary' => [
+                    'success_count' => 0,
+                    'failed_count' => 0,
+                    'stored_rows' => 0,
+                ],
+            ]
+            : $this->scraper->scrapeSelectedSkpdCuti(
+                $credentials['username'],
+                $credentials['password'],
+                $selectedSkpdIds,
+                $request->boolean('redact', false),
+                $data['date_start'],
+                $data['date_end']
+            );
+
+        $rows = $this->apelSkpdReportRows($date, $selectedSkpdIds);
+
+        return view('absensi-cms.laporan-balai-kota', [
+            'date' => $date,
+            'rows' => $rows,
+            'totals' => $this->balaiKotaTotals($rows),
+            'details' => $this->apelSkpdDetailRows($date, $selectedSkpdIds),
+            'result' => null,
+            'hariBesarResult' => null,
+            'cutiResult' => $cutiResult,
+            'dateStart' => $data['date_start'],
+            'dateEnd' => $data['date_end'],
+            'pageMode' => 'apel-skpd',
+            'pageTitle' => 'Laporan Apel SKPD',
+            'pageDescription' => 'Rekap apel SKPD terpilih dengan pencocokan cuti, tugas luar, sakit, dan diklat.',
+            'reportScopeLabel' => 'SKPD',
+            'printSubject' => 'Apel Pagi / Apel Hari Besar SKPD',
+            'fetchRoute' => 'cms.laporan-apel-skpd.fetch',
+            'fetchHariBesarRoute' => 'cms.laporan-apel-skpd.fetch-hari-besar',
+            'fetchCutiRoute' => 'cms.laporan-apel-skpd.fetch-cuti',
+            'indexRoute' => 'cms.laporan-apel-skpd.index',
+            'showSkpdSelector' => true,
+            'skpdOptions' => $this->apelSkpdOptions(),
+            'selectedSkpdIds' => $selectedSkpdIds,
         ]);
     }
 
@@ -689,7 +913,8 @@ class AbsensiCmsController extends Controller
                     ->orWhere('pangkat', 'like', '%' . $search . '%')
                     ->orWhere('pagi', 'like', '%' . $search . '%')
                     ->orWhere('pulang', 'like', '%' . $search . '%')
-                    ->orWhere('apel', 'like', '%' . $search . '%');
+                    ->orWhere('apel', 'like', '%' . $search . '%')
+                    ->orWhere('apel_hari_besar', 'like', '%' . $search . '%');
             });
         }
 
@@ -1308,6 +1533,13 @@ class AbsensiCmsController extends Controller
                 || $this->isValidApelValue($row->apel));
     }
 
+    private function hasValidBalaiKotaDailyApel(?AbsensiDailyReport $row): bool
+    {
+        return $row instanceof AbsensiDailyReport
+            && ($this->isValidApelValue($row->apel_hari_besar)
+                || $this->isValidApelValue($row->apel));
+    }
+
     private function hasValidPppkAttendance(?AbsensiPppkReport $row): bool
     {
         return $row instanceof AbsensiPppkReport
@@ -1317,7 +1549,17 @@ class AbsensiCmsController extends Controller
 
     private function balaiKotaReportRows(string $date): array
     {
-        return collect($this->balaiKotaUnits())
+        return $this->apelUnitReportRows($date, $this->balaiKotaUnits());
+    }
+
+    private function apelSkpdReportRows(string $date, array $skpdIds): array
+    {
+        return $this->apelUnitReportRows($date, $this->apelSkpdUnits($skpdIds));
+    }
+
+    private function apelUnitReportRows(string $date, array $units): array
+    {
+        return collect($units)
             ->map(function (array $unit, int $index) use ($date) {
                 $dailyRows = $this->balaiKotaDailyRows($unit, $date);
                 $pegawaiRows = $this->balaiKotaPegawaiRows($unit);
@@ -1352,7 +1594,7 @@ class AbsensiCmsController extends Controller
                     ->values();
                 $jumlahAsn = $nips->count();
                 $hadirNips = $dailyRows
-                    ->filter(fn (AbsensiDailyReport $row) => $this->isValidApelValue($row->apel))
+                    ->filter(fn (AbsensiDailyReport $row) => $this->hasValidBalaiKotaDailyApel($row))
                     ->pluck('nip')
                     ->map(fn ($nip) => $this->normalizeNip($nip))
                     ->filter()
@@ -1603,7 +1845,17 @@ class AbsensiCmsController extends Controller
 
     private function balaiKotaDetailRows(string $date): array
     {
-        return collect($this->balaiKotaUnits())
+        return $this->apelUnitDetailRows($date, $this->balaiKotaUnits());
+    }
+
+    private function apelSkpdDetailRows(string $date, array $skpdIds): array
+    {
+        return $this->apelUnitDetailRows($date, $this->apelSkpdUnits($skpdIds));
+    }
+
+    private function apelUnitDetailRows(string $date, array $units): array
+    {
+        return collect($units)
             ->map(function (array $unit, int $index) use ($date) {
                 $dailyRows = $this->balaiKotaDailyRows($unit, $date)
                     ->keyBy(fn (AbsensiDailyReport $row) => $this->normalizeNip($row->nip) ?? (string) $row->id);
@@ -1666,7 +1918,7 @@ class AbsensiCmsController extends Controller
                         $pppk = $pppkRows->get($person['nip']);
                         $pppkMaster = $pppkMasterRows->get($person['nip']);
                         $cuti = $cutiRows->get($person['nip'], collect())->first();
-                        $hadir = ($daily instanceof AbsensiDailyReport && $this->isValidApelValue($daily->apel))
+                        $hadir = $this->hasValidBalaiKotaDailyApel($daily)
                             || ($pppk instanceof AbsensiPppkReport && $this->isValidApelValue($pppk->jam_masuk));
                         $jabatan = $person['jabatan'] !== '' ? $person['jabatan'] : (string) optional($daily)->jabatan;
                         $pangkat = $this->isFilledValue($person['pangkat'] ?? null)
@@ -1692,6 +1944,8 @@ class AbsensiCmsController extends Controller
                             'pangkat' => $pangkat,
                             'source' => $source,
                             'apel' => $daily instanceof AbsensiDailyReport ? (string) $daily->apel : ($pppk instanceof AbsensiPppkReport ? (string) $pppk->jam_masuk : '-'),
+                            'apel_harian' => $daily instanceof AbsensiDailyReport ? (string) $daily->apel : ($pppk instanceof AbsensiPppkReport ? (string) $pppk->jam_masuk : '-'),
+                            'apel_hari_besar' => $daily instanceof AbsensiDailyReport ? (string) $daily->apel_hari_besar : '-',
                             'jenis_cuti' => $cuti instanceof AbsensiCutiReport ? (string) $cuti->jenis_cuti : ($isPnsTugasBelajar ? 'PNS TUGAS BELAJAR' : '-'),
                             'tanggal_cuti' => $cuti instanceof AbsensiCutiReport
                                 ? trim(optional($cuti->tanggal_mulai)->format('Y-m-d') . ' s/d ' . optional($cuti->tanggal_selesai)->format('Y-m-d'))
@@ -1897,6 +2151,76 @@ class AbsensiCmsController extends Controller
         return $totals;
     }
 
+    private function balaiKotaApelHariBesarRowsCount(string $date): int
+    {
+        return $this->apelHariBesarRowsCount($date, $this->balaiKotaSkpdIds());
+    }
+
+    private function apelHariBesarRowsCount(string $date, array $skpdIds): int
+    {
+        return AbsensiDailyReport::query()
+            ->whereDate('tanggal', $date)
+            ->whereIn('skpd_id', $skpdIds)
+            ->whereNotNull('apel_hari_besar')
+            ->where('apel_hari_besar', '<>', '')
+            ->where('apel_hari_besar', '<>', '-')
+            ->where('apel_hari_besar', '<>', '00:00:00')
+            ->count();
+    }
+
+    private function fetchSelectedDailyReports(array $skpdIds, string $date): array
+    {
+        $credentials = $this->absensiCredentials();
+        if ($credentials === null) {
+            return [
+                'success' => false,
+                'message' => 'ABSENSI_USERNAME dan ABSENSI_PASSWORD belum diatur di .env.',
+                'summary' => [
+                    'success_count' => 0,
+                    'failed_count' => 0,
+                    'stored_rows' => 0,
+                ],
+                'results' => [],
+            ];
+        }
+
+        $results = [];
+        $stored = 0;
+        $successCount = 0;
+        $failedCount = 0;
+
+        foreach ($skpdIds as $skpdId) {
+            $result = $this->scraper->scrapeDailyReports(
+                $credentials['username'],
+                $credentials['password'],
+                $date,
+                $date,
+                $skpdId,
+                $skpdId
+            );
+
+            $summary = $result['summary'] ?? [];
+            $stored += (int) ($summary['stored_rows'] ?? 0);
+            $successCount += (int) ($summary['success_count'] ?? 0);
+            $failedCount += (int) ($summary['failed_count'] ?? 0);
+            $results[] = [
+                'skpd_id' => $skpdId,
+                'success' => (bool) ($result['success'] ?? false),
+                'summary' => $summary,
+            ];
+        }
+
+        return [
+            'success' => $failedCount === 0,
+            'summary' => [
+                'success_count' => $successCount,
+                'failed_count' => $failedCount,
+                'stored_rows' => $stored,
+            ],
+            'results' => $results,
+        ];
+    }
+
     private function isValidApelValue(?string $value): bool
     {
         $value = trim((string) $value);
@@ -1944,6 +2268,76 @@ class AbsensiCmsController extends Controller
             ->unique()
             ->values()
             ->all();
+    }
+
+    private function selectedApelSkpdIds(Request $request, bool $defaultAll): array
+    {
+        $allowedIds = collect(array_keys($this->skpdMap()))
+            ->map(fn ($id) => (int) $id)
+            ->values();
+        $input = $request->input('skpd_ids');
+
+        if ($input === null && $defaultAll) {
+            return $allowedIds->all();
+        }
+
+        $selected = collect((array) $input)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values();
+
+        $ids = $allowedIds
+            ->filter(fn (int $id) => $selected->contains($id))
+            ->values();
+
+        return $ids->isNotEmpty() ? $ids->all() : ($defaultAll ? $allowedIds->all() : []);
+    }
+
+    private function apelSkpdUnits(array $skpdIds): array
+    {
+        $map = $this->skpdMap();
+
+        return collect($skpdIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => isset($map[$id]))
+            ->map(function (int $id) use ($map) {
+                return [
+                    'label' => $this->apelSkpdDisplayName($id, $map[$id]),
+                    'skpd_ids' => [$id],
+                ];
+            })
+            ->sortBy(fn (array $unit) => $this->apelSkpdSortKey((string) $unit['label']))
+            ->values()
+            ->all();
+    }
+
+    private function apelSkpdOptions(): array
+    {
+        return collect($this->skpdMap())
+            ->map(fn (array $skpd, int $id) => [
+                'id' => $id,
+                'label' => $this->apelSkpdDisplayName($id, $skpd),
+            ])
+            ->sortBy(fn (array $option) => $this->apelSkpdSortKey((string) $option['label']))
+            ->values()
+            ->all();
+    }
+
+    private function apelSkpdDisplayName(int $id, array $skpd): string
+    {
+        if ($id === 24 || Str::of((string) ($skpd['nama'] ?? ''))->lower()->contains('kepegawaian daerah')) {
+            return 'BKPSDM';
+        }
+
+        return trim((string) ($skpd['nama'] ?? ('SKPD ' . $id)));
+    }
+
+    private function apelSkpdSortKey(string $label): string
+    {
+        return $label === 'BKPSDM'
+            ? '0000'
+            : Str::of($label)->lower()->squish()->toString();
     }
 
     private function balaiKotaUnits(): array
@@ -2157,28 +2551,30 @@ class AbsensiCmsController extends Controller
             ->count('nip');
     }
 
-    private function activeSiasnEmployeeLookup(): array
+    private function activeSiasnEmployeeLookup(?array $tppPayload = null): array
     {
         if (! Schema::hasTable('siasn_absensi_location_employees')) {
             return [];
         }
 
         $lookup = [];
+        $tppSkpdRows = is_array($tppPayload['skpd'] ?? null) ? $tppPayload['skpd'] : [];
+        $tppSkpdLookup = $this->tppSkpdLookup($tppSkpdRows);
 
         SiasnAbsensiLocationEmployee::query()
             ->where('match_status', 'excel_siasn_import')
             ->whereNotNull('nip')
-            ->get(['skpd_id', 'nip', 'nama'])
-            ->each(function (SiasnAbsensiLocationEmployee $employee) use (&$lookup): void {
-                $skpdId = (string) ((int) ($employee->skpd_id ?? 0));
+            ->get(['skpd_id', 'kode_skpd', 'nama_skpd', 'nip', 'nama', 'row_data'])
+            ->each(function (SiasnAbsensiLocationEmployee $employee) use (&$lookup, $tppSkpdRows, $tppSkpdLookup): void {
+                $skpdId = (string) $this->mappedTppSkpdId($employee, $tppSkpdRows, $tppSkpdLookup);
                 $nip = preg_replace('/\D+/', '', (string) ($employee->nip ?? '')) ?: null;
-                $nameKey = $this->employeeNameKey((string) ($employee->nama ?? ''));
+                $nameKeys = $this->employeeNameKeys((string) ($employee->nama ?? ''));
 
                 if ($nip !== null) {
                     $lookup[$skpdId]['nips'][$nip] = true;
                 }
 
-                if ($nameKey !== '') {
+                foreach ($nameKeys as $nameKey) {
                     $lookup[$skpdId]['names'][$nameKey] = true;
                 }
             });
@@ -2186,15 +2582,153 @@ class AbsensiCmsController extends Controller
         return $lookup;
     }
 
+    private function tppSkpdLookup(array $skpdRows): array
+    {
+        $lookup = [
+            'by_code' => [],
+            'by_name' => [],
+        ];
+
+        foreach ($skpdRows as $skpd) {
+            $skpdId = (int) ($skpd['skpd_id'] ?? 0);
+
+            if ($skpdId <= 0) {
+                continue;
+            }
+
+            $codeKey = $this->skpdCodeKey((string) ($skpd['kode'] ?? ''));
+            $nameKey = $this->orgKey((string) ($skpd['nama'] ?? ''));
+
+            if ($codeKey !== '') {
+                $lookup['by_code'][$codeKey] = $skpdId;
+            }
+
+            if ($nameKey !== '') {
+                $lookup['by_name'][$nameKey] = $skpdId;
+            }
+        }
+
+        return $lookup;
+    }
+
+    private function mappedTppSkpdId(SiasnAbsensiLocationEmployee $employee, array $skpdRows, array $skpdLookup): int
+    {
+        $storedSkpdId = (int) ($employee->skpd_id ?? 0);
+
+        if ($skpdRows === []) {
+            return $storedSkpdId;
+        }
+
+        $codeKey = $this->skpdCodeKey((string) ($employee->kode_skpd ?? ''));
+        if ($codeKey !== '' && isset($skpdLookup['by_code'][$codeKey])) {
+            return (int) $skpdLookup['by_code'][$codeKey];
+        }
+
+        foreach ([
+            (string) ($employee->nama_skpd ?? ''),
+            (string) data_get($employee->row_data, 'UNOR 1', ''),
+            (string) data_get($employee->row_data, 'matched_skpd_name', ''),
+        ] as $name) {
+            $nameKey = $this->orgKey($name);
+
+            if ($nameKey !== '' && isset($skpdLookup['by_name'][$nameKey])) {
+                return (int) $skpdLookup['by_name'][$nameKey];
+            }
+        }
+
+        if (str_contains($this->orgKey((string) ($employee->nama_skpd ?? '')), 'STAF AHLI')) {
+            foreach ($skpdRows as $skpd) {
+                if (str_contains($this->orgKey((string) ($skpd['nama'] ?? '')), 'SEKRETARIAT DAERAH')) {
+                    return (int) ($skpd['skpd_id'] ?? $storedSkpdId);
+                }
+            }
+        }
+
+        return $storedSkpdId;
+    }
+
+    private function skpdCodeKey(?string $value): string
+    {
+        return preg_replace('/\D+/u', '', (string) $value) ?: '';
+    }
+
+    private function orgKey(?string $value): string
+    {
+        return Str::of((string) $value)
+            ->upper()
+            ->replace('PETA JABATAN', '')
+            ->replace('KOTA BANJARMASIN', '')
+            ->replaceMatches('/[^A-Z0-9]+/u', ' ')
+            ->replaceMatches('/\s+/u', ' ')
+            ->trim()
+            ->toString();
+    }
+
     private function employeeNameKey(string $value): string
     {
         return Str::of($value)
             ->lower()
-            ->replaceMatches('/\b(s\.?h|s\.?sos|s\.?stp|s\.?kom|s\.?pd|s\.?si|s\.?t|m\.?si|m\.?kom|m\.?pd|m\.?hum|a\.?md)\b\.?/u', ' ')
+            ->replaceMatches('/^\s*(hj?|drs?|dra|drg|drh?|dr|ir|prof|ns|apt)\.?\s*,\s*/u', ' ')
+            ->replaceMatches('/\([^)]*\)/u', ' ')
+            ->replaceMatches('/^\s*[-–—]\s*/u', ' ')
+            ->replaceMatches('/[,;].*$/u', ' ')
+            ->replaceMatches('/\b(hj?|drs?|dra|drg|drh?|dr|ir|prof|ns|apt)\b\.?/u', ' ')
+            ->replaceMatches('/\b(s\.?\s*(h|sos|stp|kom|pd|si|t|pi|ap|ip|kep|km|psi|farm|ak|ag|i\s*kom|i\s*pust|tr\s*keb)|m\.?\s*(si|kom|pd|hum|ap|ip|eng|kep|kes|h|t|a|ab)|a\.?\s*(md|ma)|am\.?\s*(kg|keb)|se|sh|skm|sstp?|sst|st|mt|mm|ma|mab|mpd|mmpd|amkg|amkeb|strkeb|skep|sag|sab|sp|sm|sip|ssos|skom|spd|spi|sap|spsi|sfarm|td|tra)\b\.?/u', ' ')
             ->replaceMatches('/[^a-z0-9]+/u', ' ')
             ->replaceMatches('/\s+/u', ' ')
             ->trim()
             ->toString();
+    }
+
+    private function employeeNameKeys(string $value): array
+    {
+        $key = $this->employeeNameKey($value);
+
+        if ($key === '') {
+            return [];
+        }
+
+        $aliases = [$key];
+        $tokens = array_values(array_filter(explode(' ', $key)));
+
+        if (count($tokens) > 2 && strlen((string) end($tokens)) === 1) {
+            array_pop($tokens);
+            $aliases[] = implode(' ', $tokens);
+        }
+
+        $tokens = array_values(array_filter(explode(' ', $key)));
+        $count = count($tokens);
+
+        if ($count >= 2) {
+            $first = $tokens[0];
+            $rest = array_slice($tokens, 1);
+
+            if (in_array($first, ['muhammad', 'muhamad', 'mohammad', 'mohamad', 'mohd', 'muh'], true)) {
+                $aliases[] = trim('m '.implode(' ', $rest));
+            }
+
+            if ($first === 'gusti') {
+                $aliases[] = trim('gt '.implode(' ', $rest));
+            } elseif ($first === 'gt') {
+                $aliases[] = trim('gusti '.implode(' ', $rest));
+            }
+
+            $aliases[] = implode('', $tokens);
+
+            if (strlen($tokens[0]) >= 5) {
+                $aliases[] = $tokens[0].substr($tokens[1], 0, 1);
+            }
+        }
+
+        if ($count >= 3) {
+            $aliases[] = trim($tokens[0].' '.implode(' ', array_map(fn (string $token): string => substr($token, 0, 1), array_slice($tokens, 1))));
+            $aliases[] = trim($tokens[0].' '.$tokens[1].' '.implode(' ', [
+                ...array_map(fn (string $token): string => substr($token, 0, 1), array_slice($tokens, 2, -1)),
+                $tokens[$count - 1],
+            ]));
+        }
+
+        return array_values(array_unique(array_filter($aliases)));
     }
 
     private function latestSavedCuti(): ?array

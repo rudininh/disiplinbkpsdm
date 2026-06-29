@@ -26,7 +26,7 @@ class PetaJabatanExcelService
 
         $workbook = $this->readWorkbook($path);
         $real = $this->flattenTppPayload($tppPayload);
-        $siasnFunctionalPools = $includeSiasn ? $this->siasnFunctionalPools() : [];
+        $siasnFunctionalPools = $includeSiasn ? $this->siasnFunctionalPools($real['skpd']) : [];
         $sheets = [];
         $summary = $this->emptySummary();
 
@@ -184,10 +184,15 @@ class PetaJabatanExcelService
     {
         $people = [];
         $unitKind = $this->educationUnitKindForFunctionalRecord($record['jabatan'] ?? '');
+        $contextTokens = $this->recordUnitContextTokens($record);
 
         foreach ($this->matchingJobPoolKeys($keys, $siasnJobPool) as $key) {
             foreach (($siasnJobPool[$key] ?? []) as $person) {
                 if ($unitKind !== null && ($person['unit_kind'] ?? null) !== $unitKind) {
+                    continue;
+                }
+
+                if ($contextTokens !== [] && ! $this->siasnPersonMatchesUnitContext($person, $contextTokens)) {
                     continue;
                 }
 
@@ -200,6 +205,42 @@ class PetaJabatanExcelService
         }
 
         return $this->mergePeople([], $people);
+    }
+
+    private function recordUnitContextTokens(array $record): array
+    {
+        $category = $this->normalizeText((string) (($record['category_match'] ?? null) ?: ($record['category'] ?? '')));
+
+        if ($category === '' || strcasecmp($category, 'Jabatan Fungsional') === 0) {
+            return [];
+        }
+
+        if (! (bool) ($record['category_is_position'] ?? false) && ! $this->looksLikePositionLabel($category)) {
+            return [];
+        }
+
+        return $this->significantOrgTokens($category);
+    }
+
+    private function siasnPersonMatchesUnitContext(array $person, array $contextTokens): bool
+    {
+        foreach (($person['unit_contexts'] ?? []) as $context) {
+            $contextKey = $this->orgKey((string) $context);
+
+            if ($contextKey === '') {
+                continue;
+            }
+
+            foreach ($contextTokens as $token) {
+                if (! str_contains($contextKey, $token)) {
+                    continue 2;
+                }
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     private function mergePeople(array ...$groups): array
@@ -1349,13 +1390,14 @@ class PetaJabatanExcelService
         return $rows;
     }
 
-    private function siasnFunctionalPools(): array
+    private function siasnFunctionalPools(array $skpdRows = []): array
     {
         if (! Schema::hasTable('siasn_absensi_location_employees')) {
             return [];
         }
 
         $pools = [];
+        $skpdLookup = $this->tppSkpdLookup($skpdRows);
         $employees = SiasnAbsensiLocationEmployee::query()
             ->where('match_status', 'excel_siasn_import')
             ->whereNotNull('siasn_pns_profile_id')
@@ -1371,7 +1413,7 @@ class PetaJabatanExcelService
                 continue;
             }
 
-            $skpdId = (int) ($employee->skpd_id ?? 0);
+            $skpdId = $this->mappedTppSkpdId($employee, $skpdRows, $skpdLookup);
             $jabatan = $this->normalizeText((string) ($employee->siasn_jabatan ?? ''));
             $nama = $this->normalizeText((string) ($employee->nama ?? ''));
             $unitKerja = $this->normalizeText((string) (($employee->siasn_unit_organisasi ?? '') ?: ($employee->lokasi_nama ?? '')));
@@ -1388,6 +1430,7 @@ class PetaJabatanExcelService
                 'jabatan' => $jabatan,
                 'unit_kerja' => $unitKerja,
                 'lokasi_nama' => $this->normalizeText((string) ($employee->lokasi_nama ?? '')),
+                'unit_contexts' => $this->siasnUnitContexts($employee),
                 'unit_kind' => $this->educationUnitKind($unitKerja),
                 'status_asn' => $this->asnStatus($employee->siasnProfile?->jenis_asn ?? data_get($employee->row_data, 'siasn_status')),
                 'match_status' => $employee->match_status,
@@ -1403,6 +1446,89 @@ class PetaJabatanExcelService
         }
 
         return $pools;
+    }
+
+    private function siasnUnitContexts(SiasnAbsensiLocationEmployee $employee): array
+    {
+        return array_values(array_unique(array_filter(array_map(
+            fn (mixed $value): string => $this->normalizeText((string) $value),
+            [
+                $employee->siasn_unit_organisasi,
+                $employee->lokasi_nama,
+                data_get($employee->row_data, 'UNOR 3'),
+                data_get($employee->row_data, 'UNOR 2'),
+                data_get($employee->row_data, 'UNOR 1'),
+                data_get($employee->row_data, 'excel_siasn_unor_3'),
+                data_get($employee->row_data, 'excel_siasn_unor_2'),
+                data_get($employee->row_data, 'excel_siasn_unor_1'),
+                data_get($employee->row_data, 'matched_skpd_name'),
+            ]
+        ))));
+    }
+
+    private function tppSkpdLookup(array $skpdRows): array
+    {
+        $lookup = [
+            'by_code' => [],
+            'by_name' => [],
+        ];
+
+        foreach ($skpdRows as $skpd) {
+            $skpdId = (int) ($skpd['skpd_id'] ?? 0);
+
+            if ($skpdId <= 0) {
+                continue;
+            }
+
+            $codeKey = $this->skpdCodeKey((string) ($skpd['kode'] ?? ''));
+            $nameKey = $this->orgKey((string) ($skpd['nama'] ?? ''));
+
+            if ($codeKey !== '') {
+                $lookup['by_code'][$codeKey] = $skpdId;
+            }
+
+            if ($nameKey !== '') {
+                $lookup['by_name'][$nameKey] = $skpdId;
+            }
+        }
+
+        return $lookup;
+    }
+
+    private function mappedTppSkpdId(SiasnAbsensiLocationEmployee $employee, array $skpdRows, array $skpdLookup): int
+    {
+        $storedSkpdId = (int) ($employee->skpd_id ?? 0);
+
+        if ($skpdRows === []) {
+            return $storedSkpdId;
+        }
+
+        $codeKey = $this->skpdCodeKey((string) ($employee->kode_skpd ?? ''));
+        if ($codeKey !== '' && isset($skpdLookup['by_code'][$codeKey])) {
+            return (int) $skpdLookup['by_code'][$codeKey];
+        }
+
+        foreach ([
+            (string) ($employee->nama_skpd ?? ''),
+            (string) data_get($employee->row_data, 'UNOR 1', ''),
+            (string) data_get($employee->row_data, 'matched_skpd_name', ''),
+        ] as $name) {
+            $nameKey = $this->orgKey($name);
+
+            if ($nameKey !== '' && isset($skpdLookup['by_name'][$nameKey])) {
+                return (int) $skpdLookup['by_name'][$nameKey];
+            }
+        }
+
+        $matchedSkpd = $this->matchSkpd([
+            'title' => trim(implode(' ', array_filter([
+                (string) ($employee->nama_skpd ?? ''),
+                (string) data_get($employee->row_data, 'UNOR 1', ''),
+            ]))),
+            'name' => '',
+        ], $skpdRows);
+
+        return (int) ($matchedSkpd['skpd_id'] ?? $storedSkpdId);
     }
 
     private function isActiveSiasnEmployee(SiasnAbsensiLocationEmployee $employee): bool
@@ -1988,6 +2114,11 @@ class PetaJabatanExcelService
         $value = preg_replace('/[^A-Z0-9]+/u', ' ', $value) ?: $value;
 
         return trim($value);
+    }
+
+    private function skpdCodeKey(?string $value): string
+    {
+        return preg_replace('/\D+/u', '', (string) $value) ?: '';
     }
 
     private function normalizeText(?string $value): string

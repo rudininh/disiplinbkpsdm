@@ -1,9 +1,23 @@
-﻿<!DOCTYPE html>
+﻿@php
+    $pageMode = $pageMode ?? 'balai-kota';
+    $pageTitle = $pageTitle ?? 'Laporan Balai Kota';
+    $pageDescription = $pageDescription ?? 'Rekap apel dengan pencocokan cuti, tugas luar, sakit, dan diklat.';
+    $reportScopeLabel = $reportScopeLabel ?? 'Balai Kota';
+    $printSubject = $printSubject ?? 'Apel Pagi / Apel Hari Besar';
+    $fetchRoute = $fetchRoute ?? 'cms.laporan-balai-kota.fetch';
+    $fetchHariBesarRoute = $fetchHariBesarRoute ?? 'cms.laporan-balai-kota.fetch-hari-besar';
+    $fetchCutiRoute = $fetchCutiRoute ?? 'cms.laporan-balai-kota.fetch-cuti';
+    $indexRoute = $indexRoute ?? 'cms.laporan-balai-kota.index';
+    $showSkpdSelector = $showSkpdSelector ?? false;
+    $skpdOptions = $skpdOptions ?? [];
+    $selectedSkpdIds = collect($selectedSkpdIds ?? [])->map(fn ($id) => (int) $id)->values()->all();
+@endphp
+<!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Laporan Balai Kota - Disiplin BKPSDM CMS</title>
+    <title>{{ $pageTitle }} - Disiplin BKPSDM CMS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
@@ -62,9 +76,13 @@
                     <i data-lucide="database-zap" class="h-4 w-4"></i>
                     SIASN Profil ASN
                 </a>
-                <a href="{{ route('cms.laporan-balai-kota.index') }}" class="flex items-center gap-3 rounded-md bg-white/10 px-3 py-2 text-sm font-medium">
+                <a href="{{ route('cms.laporan-balai-kota.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {{ $pageMode === 'balai-kota' ? 'bg-white/10 font-medium text-white' : 'text-zinc-300 hover:bg-white/10 hover:text-white' }}">
                     <i data-lucide="building-2" class="h-4 w-4"></i>
                     Laporan Balai Kota
+                </a>
+                <a href="{{ route('cms.laporan-apel-skpd.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm {{ $pageMode === 'apel-skpd' ? 'bg-white/10 font-medium text-white' : 'text-zinc-300 hover:bg-white/10 hover:text-white' }}">
+                    <i data-lucide="clipboard-check" class="h-4 w-4"></i>
+                    Laporan Apel SKPD
                 </a>
                 <a href="{{ route('cms.pegawai.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="users" class="h-4 w-4"></i>
@@ -81,8 +99,8 @@
             <header class="no-print border-b border-zinc-200 bg-white">
                 <div class="mx-auto flex max-w-[1400px] items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
                     <div>
-                        <h1 class="text-xl font-semibold tracking-tight">Laporan Balai Kota</h1>
-                        <p class="mt-1 text-sm text-zinc-500">Rekap apel dengan pencocokan cuti, tugas luar, sakit, dan diklat.</p>
+                        <h1 class="text-xl font-semibold tracking-tight">{{ $pageTitle }}</h1>
+                        <p class="mt-1 text-sm text-zinc-500">{{ $pageDescription }}</p>
                     </div>
                     <button type="button" onclick="window.print()" class="inline-flex items-center gap-2 rounded-md bg-zinc-900 px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800">
                         <i data-lucide="printer" class="h-4 w-4"></i>
@@ -92,16 +110,23 @@
             </header>
 
             <section class="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
-                <div class="no-print mb-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-[340px_340px_minmax(0,1fr)]">
-                    <form method="POST" action="{{ route('cms.laporan-balai-kota.fetch') }}" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                <div class="no-print mb-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-[320px_320px_340px_minmax(0,1fr)]">
+                    <form method="POST" action="{{ route($fetchRoute) }}" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
                         @csrf
+                        @if ($showSkpdSelector)
+                            <div data-selected-skpd-inputs>
+                                @foreach ($selectedSkpdIds as $selectedSkpdId)
+                                    <input type="hidden" name="skpd_ids[]" value="{{ $selectedSkpdId }}">
+                                @endforeach
+                            </div>
+                        @endif
                         <div class="flex items-center gap-3 border-b border-zinc-200 pb-4">
                             <div class="flex h-9 w-9 items-center justify-center rounded-md bg-zinc-900 text-white">
                                 <i data-lucide="database-zap" class="h-4 w-4"></i>
                             </div>
                             <div>
-                                <h2 class="text-base font-semibold">Ambil Apel Balai Kota</h2>
-                                <p class="text-sm text-zinc-500">Mengambil laporan print harian untuk SKPD lingkungan balai kota.</p>
+                                <h2 class="text-base font-semibold">Ambil Apel {{ $reportScopeLabel }}</h2>
+                                <p class="text-sm text-zinc-500">Mengambil laporan print harian untuk {{ strtolower($reportScopeLabel) }}.</p>
                             </div>
                         </div>
 
@@ -128,16 +153,59 @@
                         </button>
                     </form>
 
-                    <form method="POST" action="{{ route('cms.laporan-balai-kota.fetch-cuti') }}" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                    <form method="POST" action="{{ route($fetchHariBesarRoute) }}" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
                         @csrf
+                        @if ($showSkpdSelector)
+                            <div data-selected-skpd-inputs>
+                                @foreach ($selectedSkpdIds as $selectedSkpdId)
+                                    <input type="hidden" name="skpd_ids[]" value="{{ $selectedSkpdId }}">
+                                @endforeach
+                            </div>
+                        @endif
+                        <div class="flex items-center gap-3 border-b border-zinc-200 pb-4">
+                            <div class="flex h-9 w-9 items-center justify-center rounded-md bg-cyan-700 text-white">
+                                <i data-lucide="calendar-check" class="h-4 w-4"></i>
+                            </div>
+                            <div>
+                                <h2 class="text-base font-semibold">Ambil Apel Hari Besar {{ $reportScopeLabel }}</h2>
+                                <p class="text-sm text-zinc-500">Mengambil kolom presensi hari besar untuk {{ strtolower($reportScopeLabel) }}.</p>
+                            </div>
+                        </div>
+
+                        @if (is_array($hariBesarResult ?? null))
+                            <div class="mt-4 rounded-md border {{ ($hariBesarResult['success'] ?? false) ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800' }} px-3 py-2 text-sm">
+                                <div class="font-medium">Tersimpan {{ number_format($hariBesarResult['summary']['stored_rows'] ?? 0) }} baris.</div>
+                                <div class="mt-1 text-xs">Presensi hari besar terisi {{ number_format($hariBesarResult['summary']['filled_rows'] ?? 0) }} baris. Berhasil {{ $hariBesarResult['summary']['success_count'] ?? 0 }} SKPD, gagal {{ $hariBesarResult['summary']['failed_count'] ?? 0 }} SKPD.</div>
+                            </div>
+                        @endif
+
+                        <label class="mt-5 block text-sm font-medium text-zinc-700" for="hari_besar_date">Tanggal</label>
+                        <input id="hari_besar_date" name="date" type="date" value="{{ old('date', $date) }}" required
+                            class="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100">
+
+                        <button type="submit" class="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md bg-cyan-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-800">
+                            <i data-lucide="download-cloud" class="h-4 w-4"></i>
+                            Ambil Apel Hari Besar {{ $reportScopeLabel }}
+                        </button>
+                    </form>
+
+                    <form method="POST" action="{{ route($fetchCutiRoute) }}" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                        @csrf
+                        @if ($showSkpdSelector)
+                            <div data-selected-skpd-inputs>
+                                @foreach ($selectedSkpdIds as $selectedSkpdId)
+                                    <input type="hidden" name="skpd_ids[]" value="{{ $selectedSkpdId }}">
+                                @endforeach
+                            </div>
+                        @endif
                         <input type="hidden" name="date" value="{{ $date }}">
                         <div class="flex items-center gap-3 border-b border-zinc-200 pb-4">
                             <div class="flex h-9 w-9 items-center justify-center rounded-md bg-emerald-600 text-white">
                                 <i data-lucide="calendar-plus" class="h-4 w-4"></i>
                             </div>
                             <div>
-                                <h2 class="text-base font-semibold">Ambil Cuti Balai Kota</h2>
-                                <p class="text-sm text-zinc-500">Mengambil cuti hanya untuk SKPD lingkungan balai kota.</p>
+                                <h2 class="text-base font-semibold">Ambil Cuti {{ $reportScopeLabel }}</h2>
+                                <p class="text-sm text-zinc-500">Mengambil cuti untuk {{ strtolower($reportScopeLabel) }}.</p>
                             </div>
                         </div>
 
@@ -176,7 +244,7 @@
                         </button>
                     </form>
 
-                    <form method="GET" action="{{ route('cms.laporan-balai-kota.index') }}" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                    <form method="GET" action="{{ route($indexRoute) }}" class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
                         <div class="flex items-center gap-3">
                             <div class="flex h-9 w-9 items-center justify-center rounded-md bg-zinc-100 text-zinc-700">
                                 <i data-lucide="calendar-days" class="h-4 w-4"></i>
@@ -194,6 +262,29 @@
                                 Tampilkan
                             </button>
                         </div>
+
+                        @if ($showSkpdSelector)
+                            <div class="mt-5 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                                <div class="flex items-center justify-between gap-3">
+                                    <label class="flex items-center gap-2 text-sm font-medium text-zinc-700">
+                                        <input id="select_all_skpd" type="checkbox" class="h-4 w-4 rounded border-zinc-300 text-cyan-700 focus:ring-cyan-600">
+                                        Pilih semua SKPD
+                                    </label>
+                                    <span id="selected_skpd_count" class="shrink-0 text-xs font-medium text-zinc-500"></span>
+                                </div>
+                                <input id="skpd_search" type="search" placeholder="Cari SKPD"
+                                    class="mt-3 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100">
+                                <div class="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
+                                    @foreach ($skpdOptions as $skpdOption)
+                                        @php $skpdId = (int) ($skpdOption['id'] ?? 0); @endphp
+                                        <label class="skpd-option flex items-start gap-2 rounded-md bg-white px-2 py-2 text-sm text-zinc-700 ring-1 ring-zinc-200" data-skpd-label="{{ \Illuminate\Support\Str::lower($skpdOption['label'] ?? '') }}">
+                                            <input type="checkbox" name="skpd_ids[]" value="{{ $skpdId }}" class="skpd-option-checkbox mt-0.5 h-4 w-4 rounded border-zinc-300 text-cyan-700 focus:ring-cyan-600" @checked(in_array($skpdId, $selectedSkpdIds, true))>
+                                            <span>{{ $skpdOption['label'] ?? ('SKPD ' . $skpdId) }}</span>
+                                        </label>
+                                    @endforeach
+                                </div>
+                            </div>
+                        @endif
                     </form>
                 </div>
 
@@ -207,7 +298,7 @@
                     <div class="mt-8 grid w-full max-w-md grid-cols-[80px_12px_1fr] text-sm">
                         <div>Tentang</div>
                         <div>:</div>
-                        <div>Apel Pagi</div>
+                        <div>{{ $printSubject }}</div>
                         <div>Tanggal</div>
                         <div>:</div>
                         <div>{{ \Carbon\Carbon::parse($date)->locale('id')->translatedFormat('l, d F Y') }}</div>
@@ -265,7 +356,7 @@
                     </div>
 
                     <p class="mt-3 text-[11px] leading-relaxed text-zinc-700">
-                        Catatan: PPPK Paruh Waktu ditampilkan sebagai data informasi kepegawaian, tetapi belum dimasukkan dalam perhitungan kehadiran, tidak hadir, tanpa keterangan, maupun persentase karena belum menggunakan mekanisme absensi apel.
+                        Catatan: Status hadir dihitung dari Apel Harian atau Apel Hari Besar. PPPK Paruh Waktu ditampilkan sebagai data informasi kepegawaian, tetapi belum dimasukkan dalam perhitungan kehadiran, tidak hadir, tanpa keterangan, maupun persentase karena belum menggunakan mekanisme absensi apel.
                     </p>
                 </div>
 
@@ -315,7 +406,7 @@
                             </div>
 
                             <div class="overflow-x-auto">
-                                <table class="min-w-[1260px] w-full divide-y divide-zinc-200 text-sm">
+                                <table class="min-w-[1380px] w-full divide-y divide-zinc-200 text-sm">
                                     <thead class="bg-zinc-50">
                                         <tr>
                                             <th class="w-12 px-4 py-3 text-left font-semibold text-zinc-600">No</th>
@@ -323,7 +414,8 @@
                                             <th class="w-64 px-4 py-3 text-left font-semibold text-zinc-600">Nama</th>
                                             <th class="w-24 px-4 py-3 text-left font-semibold text-zinc-600">Jenis</th>
                                             <th class="w-72 px-4 py-3 text-left font-semibold text-zinc-600">Jabatan</th>
-                                            <th class="w-36 px-4 py-3 text-left font-semibold text-zinc-600">Apel</th>
+                                            <th class="w-36 px-4 py-3 text-left font-semibold text-zinc-600">Apel Harian</th>
+                                            <th class="w-40 px-4 py-3 text-left font-semibold text-zinc-600">Apel Hari Besar</th>
                                             <th class="w-52 px-4 py-3 text-left font-semibold text-zinc-600">Jenis Cuti/TL</th>
                                             <th class="w-48 px-4 py-3 text-left font-semibold text-zinc-600">Tanggal</th>
                                             <th class="w-40 px-4 py-3 text-left font-semibold text-zinc-600">Status</th>
@@ -345,7 +437,8 @@
                                                     @endif
                                                 </td>
                                                 <td class="px-4 py-3 text-zinc-600">{{ $detail['jabatan'] ?: '-' }}</td>
-                                                <td class="px-4 py-3 text-zinc-600">{{ $detail['apel'] ?: '-' }}</td>
+                                                <td class="px-4 py-3 text-zinc-600">{{ ($detail['apel_harian'] ?? $detail['apel'] ?? '-') ?: '-' }}</td>
+                                                <td class="px-4 py-3 text-zinc-600">{{ ($detail['apel_hari_besar'] ?? '-') ?: '-' }}</td>
                                                 <td class="px-4 py-3 text-zinc-600">{{ $detail['jenis_cuti'] ?: '-' }}</td>
                                                 <td class="px-4 py-3 text-zinc-600">{{ $detail['tanggal_cuti'] ?: '-' }}</td>
                                                 <td class="px-4 py-3">
@@ -362,7 +455,7 @@
                                             </tr>
                                         @empty
                                             <tr>
-                                                <td colspan="9" class="px-6 py-10 text-center text-sm text-zinc-500">Belum ada data pegawai untuk unit ini.</td>
+                                                <td colspan="10" class="px-6 py-10 text-center text-sm text-zinc-500">Belum ada data pegawai untuk unit ini.</td>
                                             </tr>
                                         @endforelse
                                     </tbody>
@@ -377,6 +470,73 @@
 
     <script>
         lucide.createIcons();
+
+        const skpdCheckboxes = Array.from(document.querySelectorAll('.skpd-option-checkbox'));
+        const selectAllSkpd = document.getElementById('select_all_skpd');
+        const selectedSkpdCount = document.getElementById('selected_skpd_count');
+        const skpdSearch = document.getElementById('skpd_search');
+        const hiddenSkpdContainers = Array.from(document.querySelectorAll('[data-selected-skpd-inputs]'));
+
+        function selectedSkpdValues() {
+            return skpdCheckboxes
+                .filter((checkbox) => checkbox.checked)
+                .map((checkbox) => checkbox.value);
+        }
+
+        function syncSkpdSelection() {
+            const values = selectedSkpdValues();
+
+            hiddenSkpdContainers.forEach((container) => {
+                container.replaceChildren();
+
+                values.forEach((value) => {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'skpd_ids[]';
+                    input.value = value;
+                    container.appendChild(input);
+                });
+            });
+
+            if (selectAllSkpd) {
+                selectAllSkpd.checked = values.length > 0 && values.length === skpdCheckboxes.length;
+                selectAllSkpd.indeterminate = values.length > 0 && values.length < skpdCheckboxes.length;
+            }
+
+            if (selectedSkpdCount) {
+                selectedSkpdCount.textContent = `${values.length}/${skpdCheckboxes.length}`;
+            }
+        }
+
+        skpdCheckboxes.forEach((checkbox) => {
+            checkbox.addEventListener('change', syncSkpdSelection);
+        });
+
+        if (selectAllSkpd) {
+            selectAllSkpd.addEventListener('change', () => {
+                skpdCheckboxes.forEach((checkbox) => {
+                    checkbox.checked = selectAllSkpd.checked;
+                });
+
+                syncSkpdSelection();
+            });
+        }
+
+        if (skpdSearch) {
+            skpdSearch.addEventListener('input', () => {
+                const keyword = skpdSearch.value.trim().toLowerCase();
+
+                document.querySelectorAll('.skpd-option').forEach((option) => {
+                    option.classList.toggle('hidden', keyword !== '' && ! (option.dataset.skpdLabel || '').includes(keyword));
+                });
+            });
+        }
+
+        document.querySelectorAll('form').forEach((form) => {
+            form.addEventListener('submit', syncSkpdSelection);
+        });
+
+        syncSkpdSelection();
 
         document.querySelectorAll('.detail-tab').forEach((button) => {
             button.addEventListener('click', () => {

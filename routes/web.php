@@ -38,7 +38,12 @@ Route::prefix('cms')->name('cms.')->group(function () {
     Route::post('/laporan-pppk/fetch', [AbsensiCmsController::class, 'fetchLaporanPppk'])->name('laporan-pppk.fetch');
     Route::get('/laporan-balai-kota', [AbsensiCmsController::class, 'laporanBalaiKota'])->name('laporan-balai-kota.index');
     Route::post('/laporan-balai-kota/fetch', [AbsensiCmsController::class, 'fetchLaporanBalaiKota'])->name('laporan-balai-kota.fetch');
+    Route::post('/laporan-balai-kota/fetch-hari-besar', [AbsensiCmsController::class, 'fetchLaporanBalaiKotaHariBesar'])->name('laporan-balai-kota.fetch-hari-besar');
     Route::post('/laporan-balai-kota/fetch-cuti', [AbsensiCmsController::class, 'fetchLaporanBalaiKotaCuti'])->name('laporan-balai-kota.fetch-cuti');
+    Route::get('/laporan-apel-skpd', [AbsensiCmsController::class, 'laporanApelSkpd'])->name('laporan-apel-skpd.index');
+    Route::post('/laporan-apel-skpd/fetch', [AbsensiCmsController::class, 'fetchLaporanApelSkpd'])->name('laporan-apel-skpd.fetch');
+    Route::post('/laporan-apel-skpd/fetch-hari-besar', [AbsensiCmsController::class, 'fetchLaporanApelSkpdHariBesar'])->name('laporan-apel-skpd.fetch-hari-besar');
+    Route::post('/laporan-apel-skpd/fetch-cuti', [AbsensiCmsController::class, 'fetchLaporanApelSkpdCuti'])->name('laporan-apel-skpd.fetch-cuti');
 });
 
 Route::prefix('absensi-scraper')->name('absensi-scraper.')->group(function () {

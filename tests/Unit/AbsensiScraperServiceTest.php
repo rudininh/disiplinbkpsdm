@@ -132,6 +132,54 @@ class AbsensiScraperServiceTest extends TestCase
         $this->assertSame('fallback', $action['source']);
     }
 
+    public function test_parse_daily_report_reads_presensi_hari_besar_column(): void
+    {
+        $service = new class extends AbsensiScraperService {
+            public function exposeParseDailyReportHtml(string $html, int $skpdId, string $date): array
+            {
+                return $this->parseDailyReportHtml($html, $skpdId, $date);
+            }
+        };
+
+        $html = <<<'HTML'
+            <p><strong>DAFTAR HADIR PEGAWAI NEGERI SIPIL</strong></p>
+            <table>
+                <tr><td>HARI</td><td>: SENIN</td></tr>
+                <tr><td>TANGGAL</td><td>: 29 JUNI 2026</td></tr>
+            </table>
+            <table>
+                <tr>
+                    <th>NO</th>
+                    <th>NAMA / NIP</th>
+                    <th>PANGKAT</th>
+                    <th>JABATAN</th>
+                    <th>PAGI</th>
+                    <th>PULANG</th>
+                    <th>APEL</th>
+                    <th>PRESENSI HARI BESAR</th>
+                </tr>
+                <tr>
+                    <td>1</td>
+                    <td>Rahmasari, S.Pi<br>196811132007012013</td>
+                    <td>Pembina<br>(IV/A)</td>
+                    <td>Sekretaris</td>
+                    <td>07:47:29</td>
+                    <td>00:00:00</td>
+                    <td>-</td>
+                    <td>07:50:57</td>
+                </tr>
+            </table>
+        HTML;
+
+        $parsed = $service->exposeParseDailyReportHtml($html, 24, '2026-06-29');
+
+        $this->assertSame(1, $parsed['row_count']);
+        $this->assertSame('Rahmasari, S.Pi', $parsed['rows'][0]['nama_pegawai']);
+        $this->assertSame('196811132007012013', $parsed['rows'][0]['nip']);
+        $this->assertSame('-', $parsed['rows'][0]['apel']);
+        $this->assertSame('07:50:57', $parsed['rows'][0]['apel_hari_besar']);
+    }
+
     public function test_parse_lokasi_pegawai_reads_separate_name_and_nip_columns(): void
     {
         $service = new class extends AbsensiScraperService {

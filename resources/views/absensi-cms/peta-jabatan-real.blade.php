@@ -81,6 +81,9 @@
             ? (string) ($row['skpd_id'] ?? '') === $selectedSkpdValue
             : (string) ($row['index'] ?? '') === $selectedSkpdValue
         )->values();
+    $skpdOptions = $skpdRows
+        ->sortBy(fn ($row) => strtoupper((string) ($row['nama'] ?? '')))
+        ->values();
     $jobKey = function (?string $value): string {
         $value = strtoupper(trim((string) preg_replace('/\s+/u', ' ', (string) $value)));
         $value = str_replace([
@@ -339,13 +342,67 @@
     $employeeNameKey = function (?string $value): string {
         return str((string) $value)
             ->lower()
-            ->replaceMatches('/\b(s\.?h|s\.?sos|s\.?stp|s\.?kom|s\.?pd|s\.?si|s\.?t|m\.?si|m\.?kom|m\.?pd|m\.?hum|a\.?md)\b\.?/u', ' ')
+            ->replaceMatches('/^\s*(hj?|drs?|dra|drg|drh?|dr|ir|prof|ns|apt)\.?\s*,\s*/u', ' ')
+            ->replaceMatches('/\([^)]*\)/u', ' ')
+            ->replaceMatches('/^\s*[-–—]\s*/u', ' ')
+            ->replaceMatches('/[,;].*$/u', ' ')
+            ->replaceMatches('/\b(hj?|drs?|dra|drg|drh?|dr|ir|prof|ns|apt)\b\.?/u', ' ')
+            ->replaceMatches('/\b(s\.?\s*(h|sos|stp|kom|pd|si|t|pi|ap|ip|kep|km|psi|farm|ak|ag|i\s*kom|i\s*pust|tr\s*keb)|m\.?\s*(si|kom|pd|hum|ap|ip|eng|kep|kes|h|t|a|ab)|a\.?\s*(md|ma)|am\.?\s*(kg|keb)|se|sh|skm|sstp?|sst|st|mt|mm|ma|mab|mpd|mmpd|amkg|amkeb|strkeb|skep|sag|sab|sp|sm|sip|ssos|skom|spd|spi|sap|spsi|sfarm|td|tra)\b\.?/u', ' ')
             ->replaceMatches('/[^a-z0-9]+/u', ' ')
             ->replaceMatches('/\s+/u', ' ')
             ->trim()
             ->toString();
     };
-    $isActiveSiasnPegawai = function (?string $pegawai, string $skpdId) use ($activeSiasnEmployeeLookup, $employeeNameKey): bool {
+    $employeeNameKeys = function (?string $value) use ($employeeNameKey): array {
+        $key = $employeeNameKey($value);
+
+        if ($key === '') {
+            return [];
+        }
+
+        $aliases = [$key];
+        $tokens = array_values(array_filter(explode(' ', $key)));
+
+        if (count($tokens) > 2 && strlen((string) end($tokens)) === 1) {
+            array_pop($tokens);
+            $aliases[] = implode(' ', $tokens);
+        }
+
+        $tokens = array_values(array_filter(explode(' ', $key)));
+        $count = count($tokens);
+
+        if ($count >= 2) {
+            $first = $tokens[0];
+            $rest = array_slice($tokens, 1);
+
+            if (in_array($first, ['muhammad', 'muhamad', 'mohammad', 'mohamad', 'mohd', 'muh'], true)) {
+                $aliases[] = trim('m ' . implode(' ', $rest));
+            }
+
+            if ($first === 'gusti') {
+                $aliases[] = trim('gt ' . implode(' ', $rest));
+            } elseif ($first === 'gt') {
+                $aliases[] = trim('gusti ' . implode(' ', $rest));
+            }
+
+            $aliases[] = implode('', $tokens);
+
+            if (strlen($tokens[0]) >= 5) {
+                $aliases[] = $tokens[0] . substr($tokens[1], 0, 1);
+            }
+        }
+
+        if ($count >= 3) {
+            $aliases[] = trim($tokens[0] . ' ' . implode(' ', array_map(fn (string $token): string => substr($token, 0, 1), array_slice($tokens, 1))));
+            $aliases[] = trim($tokens[0] . ' ' . $tokens[1] . ' ' . implode(' ', [
+                ...array_map(fn (string $token): string => substr($token, 0, 1), array_slice($tokens, 2, -1)),
+                $tokens[$count - 1],
+            ]));
+        }
+
+        return array_values(array_unique(array_filter($aliases)));
+    };
+    $isActiveSiasnPegawai = function (?string $pegawai, string $skpdId) use ($activeSiasnEmployeeLookup, $employeeNameKeys): bool {
         $pegawai = trim((string) $pegawai);
         if ($pegawai === '' || $pegawai === '-') {
             return false;
@@ -357,9 +414,13 @@
             return true;
         }
 
-        $nameKey = $employeeNameKey($pegawai);
+        foreach ($employeeNameKeys($pegawai) as $nameKey) {
+            if (isset($lookup['names'][$nameKey])) {
+                return true;
+            }
+        }
 
-        return $nameKey !== '' && isset($lookup['names'][$nameKey]);
+        return false;
     };
     $stripInactiveTppPeople = function (array $nodes, string $skpdId) use (&$stripInactiveTppPeople, $isVacantPegawai, $isActiveSiasnPegawai): array {
         return array_map(function (array $node) use ($stripInactiveTppPeople, $skpdId, $isVacantPegawai, $isActiveSiasnPegawai): array {
@@ -418,8 +479,64 @@
 
         return array_values([...$compacted, ...array_values($emptyGroups)]);
     };
+    $nodePersonKeys = function (array $node) use ($employeeNameKeys, $isVacantPegawai): array {
+        $pegawai = trim((string) ($node['pegawai'] ?? ''));
+
+        if ($pegawai === '' || $isVacantPegawai($pegawai, $node['jabatan'] ?? '')) {
+            return [];
+        }
+
+        $namePart = trim((string) (preg_split('/\s*\|\s*/u', $pegawai, 2)[0] ?? $pegawai));
+
+        return $employeeNameKeys($namePart);
+    };
+    $deduplicatePeopleTree = function (array $nodes, array &$seenPeople) use (&$deduplicatePeopleTree, $nodePersonKeys): array {
+        $deduped = [];
+
+        foreach ($nodes as $node) {
+            $personKeys = $nodePersonKeys($node);
+            $isDuplicatePerson = $personKeys !== [] && collect($personKeys)->contains(fn (string $personKey): bool => isset($seenPeople[$personKey]));
+            $source = $node['source'] ?? 'tpp';
+
+            if ($personKeys !== [] && ! $isDuplicatePerson) {
+                foreach ($personKeys as $personKey) {
+                    $seenPeople[$personKey] = true;
+                }
+            }
+
+            if ($isDuplicatePerson) {
+                if (in_array($source, ['siasn_person'], true) || empty($node['children'])) {
+                    continue;
+                }
+
+                $node['pegawai'] = null;
+            }
+
+            $node['children'] = $deduplicatePeopleTree(is_array($node['children'] ?? null) ? $node['children'] : [], $seenPeople);
+
+            if (
+                in_array($source, ['siasn_group', 'siasn_unit'], true)
+                && $node['children'] === []
+                && trim((string) ($node['pegawai'] ?? '')) === ''
+            ) {
+                continue;
+            }
+
+            if (
+                ($source === 'category' && ($node['callout_class'] ?? '') === 'functional')
+                && $node['children'] === []
+                && trim((string) ($node['pegawai'] ?? '')) === ''
+            ) {
+                continue;
+            }
+
+            $deduped[] = $node;
+        }
+
+        return $deduped;
+    };
     $excelVacancyMapBySkpd = [];
-    $siasnFunctionalMapBySkpd = [];
+    $siasnPlacementMapBySkpd = [];
 
     foreach ($excelSheets as $sheet) {
         $matchedSkpdId = $sheet['matched_skpd']['skpd_id'] ?? null;
@@ -439,14 +556,30 @@
                 $unitKey = $jobKey($unit);
                 $job = trim((string) (($detail['record_jabatan'] ?? null) ?: ($record['jabatan'] ?? ($detail['jabatan'] ?? '-'))));
                 $job = $job !== '' ? $job : '-';
-                $groupKey = implode('|', [$unitKey, $jobKey($job), (string) ($record['kelas'] ?? '')]);
+                $category = $record['category'] ?? 'Jabatan Fungsional';
+                $categoryMatch = $record['category_match'] ?? $category;
+                $groupKey = implode('|', [
+                    (string) $matchedSkpdId,
+                    (string) $categoryMatch,
+                    $unitKey,
+                    $jobKey($job),
+                    (string) ($record['kelas'] ?? ''),
+                ]);
                 $personKey = preg_replace('/\D+/', '', (string) ($detail['nip'] ?? '')) ?: $jobKey(($detail['name'] ?? '') . ' ' . $unit . ' ' . $job);
 
-                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['unit'] = $unit;
-                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['kelas'] = $record['kelas'] ?? ($detail['record_kelas'] ?? null);
-                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['jabatan'] = $job;
-                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['sheet_name'] = $sheet['name'] ?? null;
-                $siasnFunctionalMapBySkpd[(string) $matchedSkpdId][$unitKey]['jobs'][$groupKey]['people'][$personKey] = [
+                $siasnPlacementMapBySkpd[(string) $matchedSkpdId][$groupKey]['kelas'] = $record['kelas'] ?? ($detail['record_kelas'] ?? null);
+                $siasnPlacementMapBySkpd[(string) $matchedSkpdId][$groupKey]['jabatan'] = $job;
+                $siasnPlacementMapBySkpd[(string) $matchedSkpdId][$groupKey]['unit'] = $unit;
+                $siasnPlacementMapBySkpd[(string) $matchedSkpdId][$groupKey]['category'] = $category;
+                $siasnPlacementMapBySkpd[(string) $matchedSkpdId][$groupKey]['category_match'] = $categoryMatch;
+                $siasnPlacementMapBySkpd[(string) $matchedSkpdId][$groupKey]['category_kelas'] = $record['category_kelas'] ?? null;
+                $siasnPlacementMapBySkpd[(string) $matchedSkpdId][$groupKey]['category_is_position'] = (bool) ($record['category_is_position'] ?? false)
+                    || (
+                        ! empty($record['category_match'])
+                        && (string) ($record['category_match'] ?? '') !== (string) ($record['category'] ?? '')
+                    );
+                $siasnPlacementMapBySkpd[(string) $matchedSkpdId][$groupKey]['sheet_name'] = $sheet['name'] ?? null;
+                $siasnPlacementMapBySkpd[(string) $matchedSkpdId][$groupKey]['people'][$personKey] = [
                     'kelas' => $record['kelas'] ?? ($detail['record_kelas'] ?? null),
                     'jabatan' => $detail['jabatan'] ?? $job,
                     'pegawai' => $detail['name'] ?? $detail['display'] ?? '-',
@@ -495,75 +628,52 @@
     $excelVacanciesBySkpd = collect($excelVacancyMapBySkpd)
         ->map(fn ($items) => array_values($items))
         ->all();
-    $siasnFunctionalTreesBySkpd = collect($siasnFunctionalMapBySkpd)
-        ->map(function ($units) {
-            $unitNodes = collect($units)
-                ->sortBy('unit')
-                ->map(function ($unit) {
-                    $jobNodes = collect($unit['jobs'] ?? [])
-                        ->sortBy('jabatan')
-                        ->map(function ($job) {
-                            $people = collect($job['people'] ?? [])
-                                ->sortBy('pegawai')
-                                ->values();
-                            $count = $people->count();
-                            $personNodes = $people
-                                ->map(fn ($person) => [
-                                    'kelas' => $person['kelas'] ?? null,
-                                    'jabatan' => $person['jabatan'] ?? '-',
-                                    'pegawai' => implode(' | ', array_values(array_filter([
-                                        $person['pegawai'] ?? '-',
-                                        $person['nip'] ?? null,
-                                        $person['status_asn'] ?? null,
-                                        ! empty($person['jabatan']) ? 'Jabatan SIASN: ' . $person['jabatan'] : null,
-                                    ]))),
-                                    'children' => [],
-                                    'callout_class' => 'info',
-                                    'source' => 'siasn_person',
-                                ])
-                                ->all();
-
-                            return [
-                                'kelas' => $job['kelas'] ?? null,
-                                'jabatan' => $job['jabatan'] ?? '-',
-                                'pegawai' => null,
-                                'children' => $personNodes,
-                                'callout_class' => 'info',
-                                'source' => 'siasn_group',
-                                'sheet_name' => $job['sheet_name'] ?? null,
-                                'bezetting' => $count,
-                                'kebutuhan' => $count,
-                                'selisih' => 0,
-                                'vacancy_count' => 0,
-                            ];
-                        })
-                        ->values()
+    $siasnPlacementsBySkpd = collect($siasnPlacementMapBySkpd)
+        ->map(function ($groups) {
+            return collect($groups)
+                ->sortBy('jabatan')
+                ->map(function ($group) {
+                    $people = collect($group['people'] ?? [])
+                        ->sortBy('pegawai')
+                        ->values();
+                    $count = $people->count();
+                    $personNodes = $people
+                        ->map(fn ($person) => [
+                            'kelas' => $person['kelas'] ?? null,
+                            'jabatan' => $person['jabatan'] ?? '-',
+                            'pegawai' => implode(' | ', array_values(array_filter([
+                                $person['pegawai'] ?? '-',
+                                $person['nip'] ?? null,
+                                $person['status_asn'] ?? null,
+                                ! empty($person['jabatan']) ? 'Jabatan SIASN: ' . $person['jabatan'] : null,
+                            ]))),
+                            'children' => [],
+                            'callout_class' => 'info',
+                            'source' => 'siasn_person',
+                        ])
                         ->all();
-                    $count = collect($jobNodes)->sum(fn ($node) => (int) ($node['bezetting'] ?? 0));
 
                     return [
-                        'kelas' => null,
-                        'jabatan' => $unit['unit'] ?? 'Unit Kerja SIASN',
-                        'pegawai' => number_format($count) . ' pegawai SIASN',
-                        'children' => $jobNodes,
-                        'callout_class' => 'functional',
-                        'source' => 'siasn_unit',
+                        'kelas' => $group['kelas'] ?? null,
+                        'jabatan' => $group['jabatan'] ?? '-',
+                        'pegawai' => null,
+                        'children' => $personNodes,
+                        'callout_class' => 'info',
+                        'source' => 'siasn_group',
+                        'category' => $group['category'] ?? 'Jabatan Fungsional',
+                        'category_match' => $group['category_match'] ?? ($group['category'] ?? 'Jabatan Fungsional'),
+                        'category_kelas' => $group['category_kelas'] ?? null,
+                        'category_is_position' => (bool) ($group['category_is_position'] ?? false),
+                        'sheet_name' => $group['sheet_name'] ?? null,
+                        'unit_kerja' => $group['unit'] ?? null,
+                        'bezetting' => $count,
+                        'kebutuhan' => $count,
+                        'selisih' => 0,
+                        'vacancy_count' => 0,
                     ];
                 })
                 ->values()
                 ->all();
-            $count = collect($unitNodes)->sum(function ($unitNode) {
-                return collect($unitNode['children'] ?? [])->sum(fn ($node) => (int) ($node['bezetting'] ?? 0));
-            });
-
-            return [[
-                'kelas' => null,
-                'jabatan' => 'Jabatan Fungsional',
-                'pegawai' => number_format($count) . ' pegawai SIASN',
-                'children' => $unitNodes,
-                'callout_class' => 'functional',
-                'source' => 'category',
-            ]];
         })
         ->all();
 @endphp
@@ -628,6 +738,10 @@
                 <a href="{{ route('cms.laporan-balai-kota.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="building-2" class="h-4 w-4"></i>
                     Laporan Balai Kota
+                </a>
+                <a href="{{ route('cms.laporan-apel-skpd.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="clipboard-check" class="h-4 w-4"></i>
+                    Laporan Apel SKPD
                 </a>
                 <a href="{{ route('cms.pegawai.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="users" class="h-4 w-4"></i>
@@ -1024,12 +1138,12 @@
                                 <span class="text-xs font-semibold uppercase text-zinc-500">SKPD</span>
                                 <select name="skpd" class="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm">
                                     <option value="all" @selected($selectedSkpdKey === 'all')>Semua SKPD</option>
-                                    @foreach ($skpdRows as $option)
+                                    @foreach ($skpdOptions as $option)
                                         @php
                                             $optionValue = isset($option['skpd_id'])
                                                 ? 'skpd:' . (string) $option['skpd_id']
                                                 : 'index:' . (string) ($option['index'] ?? '');
-                                            $optionLabel = trim(($option['kode'] ?? '-') . ' - ' . ($option['nama'] ?? 'SKPD tanpa nama'));
+                                            $optionLabel = $loop->iteration . '. ' . ($option['nama'] ?? 'SKPD tanpa nama');
                                         @endphp
                                         <option value="{{ $optionValue }}" @selected($selectedSkpdKey === $optionValue)>{{ $optionLabel }}</option>
                                     @endforeach
@@ -1050,8 +1164,13 @@
                                 $rawTree = is_array($skpd['tree'] ?? null) ? $skpd['tree'] : [];
                                 $rawTree = $isSiasnPage ? $stripInactiveTppPeople($rawTree, (string) ($skpd['skpd_id'] ?? 0)) : $rawTree;
                                 $realTree = $compactEmptyTppNodes($rawTree);
-                                $realTree = array_values([...$realTree, ...($siasnFunctionalTreesBySkpd[(string) ($skpd['skpd_id'] ?? '')] ?? [])]);
-                                $mergedTree = $appendVacancies($realTree, $vacancyNodes);
+                                $placementNodes = array_values([
+                                    ...($siasnPlacementsBySkpd[(string) ($skpd['skpd_id'] ?? '')] ?? []),
+                                    ...$vacancyNodes,
+                                ]);
+                                $mergedTree = $appendVacancies($realTree, $placementNodes);
+                                $seenPeople = [];
+                                $mergedTree = $deduplicatePeopleTree($mergedTree, $seenPeople);
                             @endphp
                             <article class="rounded-lg border border-zinc-200 bg-white shadow-sm">
                                 <div class="border-b border-zinc-200 bg-cyan-700 px-5 py-4 text-white">
