@@ -479,18 +479,23 @@ class AbsensiCmsController extends Controller
     public function laporanBalaiKota(Request $request): View
     {
         $date = (string) $request->input('date', now()->toDateString());
-        $rows = $this->balaiKotaReportRows($date);
+        $selectedSkpdIds = $this->balaiKotaSelectedSkpdIds($request);
+        $extraSkpdIds = $this->balaiKotaExtraSkpdIds($selectedSkpdIds);
+        $rows = $this->balaiKotaReportRowsWithExtra($date, $extraSkpdIds);
 
         return view('absensi-cms.laporan-balai-kota', [
             'date' => $date,
             'rows' => $rows,
             'totals' => $this->balaiKotaTotals($rows),
-            'details' => $this->balaiKotaDetailRows($date),
+            'details' => $this->balaiKotaDetailRowsWithExtra($date, $extraSkpdIds),
             'result' => null,
             'hariBesarResult' => null,
             'cutiResult' => null,
             'dateStart' => $request->input('date_start', $date),
             'dateEnd' => $request->input('date_end', $date),
+            'showSkpdSelector' => true,
+            'skpdOptions' => $this->apelSkpdOptions(),
+            'selectedSkpdIds' => $selectedSkpdIds,
         ]);
     }
 
@@ -498,14 +503,23 @@ class AbsensiCmsController extends Controller
     {
         $data = $request->validate([
             'date' => ['required', 'date'],
+            'skpd_ids' => ['nullable', 'array'],
+            'skpd_ids.*' => ['integer', 'min:1'],
         ]);
+        $selectedSkpdIds = $this->balaiKotaSelectedSkpdIds($request);
+        $extraSkpdIds = $this->balaiKotaExtraSkpdIds($selectedSkpdIds);
+        $allFetchSkpdIds = collect($this->balaiKotaSkpdIds())
+            ->merge($extraSkpdIds)
+            ->unique()
+            ->values()
+            ->all();
         $credentials = $this->absensiCredentials();
         $results = [];
         $stored = 0;
         $successCount = 0;
         $failedCount = 0;
 
-        foreach ($this->balaiKotaSkpdIds() as $skpdId) {
+        foreach ($allFetchSkpdIds as $skpdId) {
             $result = $this->scraper->scrapeDailyReports(
                 $credentials['username'],
                 $credentials['password'],
@@ -526,13 +540,13 @@ class AbsensiCmsController extends Controller
             ];
         }
 
-        $rows = $this->balaiKotaReportRows($data['date']);
+        $rows = $this->balaiKotaReportRowsWithExtra($data['date'], $extraSkpdIds);
 
         return view('absensi-cms.laporan-balai-kota', [
             'date' => $data['date'],
             'rows' => $rows,
             'totals' => $this->balaiKotaTotals($rows),
-            'details' => $this->balaiKotaDetailRows($data['date']),
+            'details' => $this->balaiKotaDetailRowsWithExtra($data['date'], $extraSkpdIds),
             'result' => [
                 'success' => $failedCount === 0,
                 'summary' => [
@@ -546,6 +560,9 @@ class AbsensiCmsController extends Controller
             'cutiResult' => null,
             'dateStart' => $data['date'],
             'dateEnd' => $data['date'],
+            'showSkpdSelector' => true,
+            'skpdOptions' => $this->apelSkpdOptions(),
+            'selectedSkpdIds' => $selectedSkpdIds,
         ]);
     }
 
@@ -553,14 +570,23 @@ class AbsensiCmsController extends Controller
     {
         $data = $request->validate([
             'date' => ['required', 'date'],
+            'skpd_ids' => ['nullable', 'array'],
+            'skpd_ids.*' => ['integer', 'min:1'],
         ]);
+        $selectedSkpdIds = $this->balaiKotaSelectedSkpdIds($request);
+        $extraSkpdIds = $this->balaiKotaExtraSkpdIds($selectedSkpdIds);
+        $allFetchSkpdIds = collect($this->balaiKotaSkpdIds())
+            ->merge($extraSkpdIds)
+            ->unique()
+            ->values()
+            ->all();
         $credentials = $this->absensiCredentials();
         $results = [];
         $stored = 0;
         $successCount = 0;
         $failedCount = 0;
 
-        foreach ($this->balaiKotaSkpdIds() as $skpdId) {
+        foreach ($allFetchSkpdIds as $skpdId) {
             $result = $this->scraper->scrapeDailyReports(
                 $credentials['username'],
                 $credentials['password'],
@@ -581,13 +607,13 @@ class AbsensiCmsController extends Controller
             ];
         }
 
-        $rows = $this->balaiKotaReportRows($data['date']);
+        $rows = $this->balaiKotaReportRowsWithExtra($data['date'], $extraSkpdIds);
 
         return view('absensi-cms.laporan-balai-kota', [
             'date' => $data['date'],
             'rows' => $rows,
             'totals' => $this->balaiKotaTotals($rows),
-            'details' => $this->balaiKotaDetailRows($data['date']),
+            'details' => $this->balaiKotaDetailRowsWithExtra($data['date'], $extraSkpdIds),
             'result' => null,
             'hariBesarResult' => [
                 'success' => $failedCount === 0,
@@ -595,13 +621,16 @@ class AbsensiCmsController extends Controller
                     'success_count' => $successCount,
                     'failed_count' => $failedCount,
                     'stored_rows' => $stored,
-                    'filled_rows' => $this->balaiKotaApelHariBesarRowsCount($data['date']),
+                    'filled_rows' => $this->apelHariBesarRowsCount($data['date'], $allFetchSkpdIds),
                 ],
                 'results' => $results,
             ],
             'cutiResult' => null,
             'dateStart' => $data['date'],
             'dateEnd' => $data['date'],
+            'showSkpdSelector' => true,
+            'skpdOptions' => $this->apelSkpdOptions(),
+            'selectedSkpdIds' => $selectedSkpdIds,
         ]);
     }
 
@@ -612,8 +641,17 @@ class AbsensiCmsController extends Controller
             'date_start' => ['required', 'date'],
             'date_end' => ['required', 'date', 'after_or_equal:date_start'],
             'redact' => ['nullable', 'boolean'],
+            'skpd_ids' => ['nullable', 'array'],
+            'skpd_ids.*' => ['integer', 'min:1'],
         ]);
         $date = (string) ($data['date'] ?? $data['date_end']);
+        $selectedSkpdIds = $this->balaiKotaSelectedSkpdIds($request);
+        $extraSkpdIds = $this->balaiKotaExtraSkpdIds($selectedSkpdIds);
+        $allFetchSkpdIds = collect($this->balaiKotaSkpdIds())
+            ->merge($extraSkpdIds)
+            ->unique()
+            ->values()
+            ->all();
         $credentials = $this->absensiCredentials();
 
         $cutiResult = $credentials === null
@@ -629,24 +667,27 @@ class AbsensiCmsController extends Controller
             : $this->scraper->scrapeSelectedSkpdCuti(
                 $credentials['username'],
                 $credentials['password'],
-                $this->balaiKotaSkpdIds(),
+                $allFetchSkpdIds,
                 $request->boolean('redact', false),
                 $data['date_start'],
                 $data['date_end']
             );
 
-        $rows = $this->balaiKotaReportRows($date);
+        $rows = $this->balaiKotaReportRowsWithExtra($date, $extraSkpdIds);
 
         return view('absensi-cms.laporan-balai-kota', [
             'date' => $date,
             'rows' => $rows,
             'totals' => $this->balaiKotaTotals($rows),
-            'details' => $this->balaiKotaDetailRows($date),
+            'details' => $this->balaiKotaDetailRowsWithExtra($date, $extraSkpdIds),
             'result' => null,
             'hariBesarResult' => null,
             'cutiResult' => $cutiResult,
             'dateStart' => $data['date_start'],
             'dateEnd' => $data['date_end'],
+            'showSkpdSelector' => true,
+            'skpdOptions' => $this->apelSkpdOptions(),
+            'selectedSkpdIds' => $selectedSkpdIds,
         ]);
     }
 
@@ -2268,6 +2309,84 @@ class AbsensiCmsController extends Controller
             ->unique()
             ->values()
             ->all();
+    }
+
+    private function balaiKotaDefaultSkpdIds(): array
+    {
+        return $this->balaiKotaSkpdIds();
+    }
+
+    private function balaiKotaSelectedSkpdIds(Request $request): array
+    {
+        $defaultIds = $this->balaiKotaDefaultSkpdIds();
+        $allowedIds = collect(array_keys($this->skpdMap()))
+            ->map(fn ($id) => (int) $id)
+            ->values();
+        $input = $request->input('skpd_ids');
+
+        if ($input === null) {
+            return $defaultIds;
+        }
+
+        $selected = collect((array) $input)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values();
+
+        $ids = $allowedIds
+            ->filter(fn (int $id) => $selected->contains($id))
+            ->values();
+
+        return $ids->isNotEmpty() ? $ids->all() : $defaultIds;
+    }
+
+    private function balaiKotaExtraSkpdIds(array $selectedSkpdIds): array
+    {
+        $defaultIds = collect($this->balaiKotaDefaultSkpdIds());
+
+        return collect($selectedSkpdIds)
+            ->reject(fn (int $id) => $defaultIds->contains($id))
+            ->values()
+            ->all();
+    }
+
+    private function balaiKotaReportRowsWithExtra(string $date, array $extraSkpdIds): array
+    {
+        $rows = $this->balaiKotaReportRows($date);
+
+        if ($extraSkpdIds === []) {
+            return $rows;
+        }
+
+        $extraRows = $this->apelUnitReportRows($date, $this->apelSkpdUnits($extraSkpdIds));
+        $startNo = count($rows) + 1;
+
+        foreach ($extraRows as $index => $row) {
+            $row['no'] = $startNo + $index;
+            $rows[] = $row;
+        }
+
+        return $rows;
+    }
+
+    private function balaiKotaDetailRowsWithExtra(string $date, array $extraSkpdIds): array
+    {
+        $details = $this->balaiKotaDetailRows($date);
+
+        if ($extraSkpdIds === []) {
+            return $details;
+        }
+
+        $extraDetails = $this->apelUnitDetailRows($date, $this->apelSkpdUnits($extraSkpdIds));
+        $existingCount = count($details);
+
+        foreach ($extraDetails as $index => $detail) {
+            $detail['id'] = 'unit-' . ($existingCount + $index + 1);
+            $details[] = $detail;
+        }
+
+        return $details;
     }
 
     private function selectedApelSkpdIds(Request $request, bool $defaultAll): array

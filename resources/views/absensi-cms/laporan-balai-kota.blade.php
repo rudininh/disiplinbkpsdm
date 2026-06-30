@@ -372,7 +372,7 @@
                         <div class="mt-4 flex gap-2 overflow-x-auto pb-1" role="tablist">
                             @foreach ($details as $unit)
                                 <button type="button"
-                                    class="detail-tab shrink-0 rounded-md border px-3 py-2 text-left text-xs font-medium transition first:border-zinc-900 first:bg-zinc-900 first:text-white"
+                                    class="detail-tab shrink-0 rounded-md border px-3 py-2 text-left text-xs font-medium transition {{ $loop->first ? 'border-zinc-900 bg-zinc-900 text-white' : 'border-zinc-200 bg-white text-zinc-700' }}"
                                     data-tab-target="{{ $unit['id'] }}"
                                     role="tab">
                                     <span class="block max-w-56 truncate">{{ $unit['label'] }}</span>

@@ -1,10 +1,10 @@
 {
     "meta": {
         "path": "/admin/cuti",
-        "skpd_id": 35,
-        "date_start": "2026-06-29",
-        "date_end": "2026-06-29",
-        "fetched_at": "2026-06-29T01:47:07.550797Z",
+        "skpd_id": 25,
+        "date_start": "2026-06-30",
+        "date_end": "2026-06-30",
+        "fetched_at": "2026-06-30T00:58:04.829896Z",
         "redacted": false
     },
     "cuti": {
