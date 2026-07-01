@@ -440,18 +440,25 @@ class AbsensiCmsController extends Controller
         $data = $request->validate([
             'date_start' => ['required', 'date'],
             'date_end' => ['required', 'date', 'after_or_equal:date_start'],
+            'scope' => ['nullable', 'in:range,all'],
             'start_skpd_id' => ['nullable', 'integer', 'min:1'],
             'end_skpd_id' => ['nullable', 'integer', 'min:1', 'gte:start_skpd_id'],
         ]);
         $credentials = $this->absensiCredentials();
+        $skpdRange = ($data['scope'] ?? 'range') === 'all'
+            ? $this->allConfiguredSkpdRange()
+            : [
+                (int) ($data['start_skpd_id'] ?? 1),
+                (int) ($data['end_skpd_id'] ?? 35),
+            ];
 
         $result = $this->scraper->scrapePppkReports(
             $credentials['username'],
             $credentials['password'],
             $data['date_start'],
             $data['date_end'],
-            (int) ($data['start_skpd_id'] ?? 1),
-            (int) ($data['end_skpd_id'] ?? 35)
+            $skpdRange[0],
+            $skpdRange[1]
         );
 
         $query = AbsensiPppkReport::query()->latest('tanggal')->latest('id');
@@ -1011,7 +1018,9 @@ class AbsensiCmsController extends Controller
                     ->orWhere('nama_skpd', 'like', '%' . $search . '%')
                     ->orWhere('unit_kerja', 'like', '%' . $search . '%')
                     ->orWhere('jabatan', 'like', '%' . $search . '%')
-                    ->orWhere('jenis_presensi', 'like', '%' . $search . '%');
+                    ->orWhere('pangkat', 'like', '%' . $search . '%')
+                    ->orWhere('jenis_presensi', 'like', '%' . $search . '%')
+                    ->orWhere('status_asn', 'like', '%' . $search . '%');
             });
         }
 
@@ -1627,10 +1636,8 @@ class AbsensiCmsController extends Controller
                     ->filter()
                     ->unique()
                     ->values();
-                $pppkParuhWaktuNips = $this->pppkParuhWaktuNips($dailyRows);
                 $nips = ($masterNips->isNotEmpty() ? $masterNips : $dailyNips)
                     ->merge($pppkNips)
-                    ->diff($pppkParuhWaktuNips)
                     ->unique()
                     ->values();
                 $jumlahAsn = $nips->count();
@@ -1933,11 +1940,13 @@ class AbsensiCmsController extends Controller
                     })->values();
                 $people = collect($people->values());
                 $pppkPeople = collect($pppkMasterRows->values())->map(function (AbsensiPppk $pppk) {
+                    $pangkat = (string) ($pppk->pangkat ?: $pppk->status_asn);
+
                     return [
                         'nip' => $this->normalizeNip($pppk->nip),
                         'nama' => (string) $pppk->nama,
                         'jabatan' => (string) $pppk->jabatan,
-                        'pangkat' => 'PPPK',
+                        'pangkat' => $pangkat !== '' ? $pangkat : 'PPPK',
                         'source' => 'PPPK',
                     ];
                 })->merge(collect($pppkRows->values())->map(function (AbsensiPppkReport $pppk) {
@@ -1965,18 +1974,19 @@ class AbsensiCmsController extends Controller
                         $pangkat = $this->isFilledValue($person['pangkat'] ?? null)
                             ? (string) $person['pangkat']
                             : (string) optional($daily)->pangkat;
+                        $isPppkParuhWaktu = $this->isPppkParuhWaktuPangkat($pangkat)
+                            || $this->isPppkParuhWaktuPangkat((string) optional($daily)->pangkat)
+                            || ($pppkMaster instanceof AbsensiPppk && $this->isPppkParuhWaktu($pppkMaster));
                         $source = match (true) {
+                            $isPppkParuhWaktu => 'PPPK Paruh Waktu',
                             ($person['source'] ?? 'PNS') === 'PPPK' || $pppkMaster instanceof AbsensiPppk || $pppk instanceof AbsensiPppkReport => 'PPPK',
-                            $this->isPppkParuhWaktuPangkat($pangkat) || $this->isPppkParuhWaktuPangkat((string) optional($daily)->pangkat) => 'PPPK Paruh Waktu',
                             default => 'PNS',
                         };
                         $isActive = $this->hasActiveJabatan($jabatan);
                         $isPnsTugasBelajar = $source === 'PNS' && $this->isPnsTugasBelajarJabatan($jabatan);
-                        $status = $source === 'PPPK Paruh Waktu'
-                            ? 'Belum Wajib Absen'
-                            : ($isActive
+                        $status = $isActive
                             ? ($hadir ? 'Hadir' : (($cuti instanceof AbsensiCutiReport || $isPnsTugasBelajar) ? 'Tugas/Cuti' : 'Tanpa Keterangan'))
-                            : 'Pegawai Tidak Aktif');
+                            : 'Pegawai Tidak Aktif';
 
                         return [
                             'nip' => $person['nip'],
@@ -2004,26 +2014,14 @@ class AbsensiCmsController extends Controller
                     'label' => $unit['label'],
                     'rows' => $rows,
                     'summary' => [
-                        'jumlah_asn' => collect($rows)->whereNotIn('status', ['Pegawai Tidak Aktif', 'Belum Wajib Absen'])->count(),
+                        'jumlah_asn' => collect($rows)->where('status', '<>', 'Pegawai Tidak Aktif')->count(),
                         'hadir' => collect($rows)->where('status', 'Hadir')->count(),
                         'tugas_cuti' => collect($rows)->where('status', 'Tugas/Cuti')->count(),
                         'tanpa_keterangan' => collect($rows)->where('status', 'Tanpa Keterangan')->count(),
-                        'belum_wajib_absen' => collect($rows)->where('status', 'Belum Wajib Absen')->count(),
                     ],
                 ];
             })
             ->all();
-    }
-
-    private function pppkParuhWaktuNips($dailyRows)
-    {
-        return $dailyRows
-            ->filter(fn (AbsensiDailyReport $row) => $this->isPppkParuhWaktuPangkat($row->pangkat))
-            ->pluck('nip')
-            ->map(fn ($nip) => $this->normalizeNip($nip))
-            ->filter()
-            ->unique()
-            ->values();
     }
 
     private function normalizeNip($value): ?string
@@ -2446,7 +2444,7 @@ class AbsensiCmsController extends Controller
     private function apelSkpdDisplayName(int $id, array $skpd): string
     {
         if ($id === 24 || Str::of((string) ($skpd['nama'] ?? ''))->lower()->contains('kepegawaian daerah')) {
-            return 'BKPSDM';
+            return 'Badan Kepegawaian dan Pengembangan Sumber Daya Manusia';
         }
 
         return trim((string) ($skpd['nama'] ?? ('SKPD ' . $id)));
@@ -2454,9 +2452,7 @@ class AbsensiCmsController extends Controller
 
     private function apelSkpdSortKey(string $label): string
     {
-        return $label === 'BKPSDM'
-            ? '0000'
-            : Str::of($label)->lower()->squish()->toString();
+        return Str::of($label)->lower()->squish()->toString();
     }
 
     private function balaiKotaUnits(): array
@@ -2655,6 +2651,19 @@ class AbsensiCmsController extends Controller
         $configured = config('services.absensi.skpd', []);
 
         return is_array($configured) ? $configured : [];
+    }
+
+    private function allConfiguredSkpdRange(): array
+    {
+        $ids = collect(array_keys($this->skpdMap()))
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->sort()
+            ->values();
+
+        return $ids->isNotEmpty()
+            ? [$ids->first(), $ids->last()]
+            : [1, 35];
     }
 
     private function siasnEmployeeTotal(): int

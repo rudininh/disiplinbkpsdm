@@ -29,7 +29,9 @@ class AbsensiScraperService
     private const ADMIN_LAPORAN_PATH = '/admin/laporan';
     private const ADMIN_LAPORAN_TANGGAL_PATH = '/admin/laporan/tanggal';
     private const ADMIN_LOKASI_PATH = '/admin/lokasi';
+    private const ADMIN_PEGAWAI_PATH = '/admin/pegawai';
     private const ADMIN_PPPK_PATH = '/admin/pppk';
+    private const ADMIN_PUSKESMAS_PATH = '/admin/puskesmas';
     private const SUPERADMIN_PEGAWAI_PATH = '/superadmin/pegawai';
     private const SENSITIVE_HEADER_KEYWORDS = ['nip', 'nama', 'pegawai', 'nik', 'alamat', 'telepon', 'hp', 'email'];
 
@@ -37,6 +39,7 @@ class AbsensiScraperService
     private CookieJar $cookieJar;
     private string $baseUrl;
     private string $cookieSessionKey;
+    private bool $puskesmasContext = false;
 
     public function __construct(?Client $client = null)
     {
@@ -274,7 +277,7 @@ class AbsensiScraperService
             ];
         }
 
-        $skpdActions = $this->fetchSkpdLoginActions(min($skpdIds), max($skpdIds));
+        $skpdActions = $this->fetchSkpdLoginActionsForSkpdIds($skpdIds);
         $results = [];
         $stored = 0;
         $successCount = 0;
@@ -287,7 +290,7 @@ class AbsensiScraperService
                     $this->authenticatePortal($username, $password);
                 }
 
-                $skpdLogin = $this->loginAsSkpd($skpdId, $skpdActions[$skpdId] ?? null);
+                $skpdLogin = $this->loginForSkpdContext($skpdId, $skpdActions[$skpdId] ?? null);
                 $cuti = $this->getCutiDataForRange($redact, $skpdId, $dateStart, $dateEnd, true);
                 $isSuccess = (bool) ($cuti['success'] ?? false);
                 $storedForSkpd = (int) ($cuti['stored_rows'] ?? 0);
@@ -424,22 +427,84 @@ class AbsensiScraperService
         $auth = $this->authenticatePortal($username, $password);
         $startSkpdId = max(1, $startSkpdId);
         $endSkpdId = max($startSkpdId, $endSkpdId);
-        $skpdActions = $this->fetchSkpdLoginActions($startSkpdId, $endSkpdId);
+        $skpdIds = $this->configuredSkpdIdsForRange($startSkpdId, $endSkpdId);
+        $skpdActions = $this->fetchSkpdLoginActionsForSkpdIds($skpdIds);
         $results = [];
         $stored = 0;
         $successCount = 0;
         $failedCount = 0;
 
-        for ($skpdId = $startSkpdId; $skpdId <= $endSkpdId; $skpdId++) {
+        foreach ($skpdIds as $index => $skpdId) {
             try {
-                if ($skpdId > $startSkpdId) {
+                if ($index > 0) {
                     $this->resetPortalSession();
                     $this->authenticatePortal($username, $password);
                 }
 
-                $skpdLogin = $this->loginAsSkpd($skpdId, $skpdActions[$skpdId] ?? null);
+                $skpdLogin = $this->loginForSkpdContext($skpdId, $skpdActions[$skpdId] ?? null);
                 $storedForSkpd = 0;
                 $dateResults = [];
+
+                if ($this->isPuskesmasVirtualSkpd($skpdId)) {
+                    $pegawai = $this->getAdminPegawaiData($skpdId, false, false);
+                    $pppk = $this->getPppkData($skpdId, true);
+                    $storedForSkpd += (int) ($pppk['stored_rows'] ?? 0);
+                    $pppkNips = collect($pppk['data']['rows'] ?? [])
+                        ->pluck('nip')
+                        ->map(fn ($nip) => preg_replace('/\D+/', '', (string) $nip))
+                        ->filter()
+                        ->unique()
+                        ->values();
+                    $this->removePppkRowsFromPegawaiMaster($skpdId, $pppkNips->all());
+                    $this->removePppkRowsFromDailyReports($skpdId, $pppkNips->all(), $dateStart, $dateEnd);
+                    $pnsRows = collect($pegawai['pns']['rows'] ?? [])
+                        ->reject(fn (array $person) => $pppkNips->contains(preg_replace('/\D+/', '', (string) ($person['nip'] ?? ''))))
+                        ->values()
+                        ->all();
+                    $storedForSkpd += $this->storePegawaiRows([
+                        'skpd_id' => $skpdId,
+                        'row_count' => count($pnsRows),
+                        'rows' => $pnsRows,
+                    ], [
+                        'fetched_at' => now(),
+                    ]);
+                    $people = $this->uniquePppkPeople(array_merge(
+                        is_array($pppk['data']['rows'] ?? null) ? $pppk['data']['rows'] : []
+                    ));
+                    $pnsPeople = $pnsRows;
+
+                    foreach ($pnsPeople as $person) {
+                        if (! is_array($person) || ! $this->hasPegawaiPresensiTarget($person)) {
+                            continue;
+                        }
+
+                        $months = [];
+                        for ($monthDate = $startDate->copy()->startOfMonth(); $monthDate->lte($endDate); $monthDate->addMonth()) {
+                            $months[$monthDate->format('Y-m')] = [$monthDate->format('m'), $monthDate->format('Y')];
+                        }
+
+                        foreach ($months as [$month, $year]) {
+                            $report = $this->getPegawaiMonthlyPresensi($skpdId, $person, $month, $year, true, $dateStart, $dateEnd);
+                            $storedForSkpd += (int) ($report['stored_rows'] ?? 0);
+                        }
+                    }
+
+                    foreach ($people as $person) {
+                        if (! $this->hasPppkPresensiTarget($person)) {
+                            continue;
+                        }
+
+                        $months = [];
+                        for ($monthDate = $startDate->copy()->startOfMonth(); $monthDate->lte($endDate); $monthDate->addMonth()) {
+                            $months[$monthDate->format('Y-m')] = [$monthDate->format('m'), $monthDate->format('Y')];
+                        }
+
+                        foreach ($months as [$month, $year]) {
+                            $report = $this->getPppkMonthlyPresensi($skpdId, $person, $month, $year, true, $dateStart, $dateEnd);
+                            $storedForSkpd += (int) ($report['stored_rows'] ?? 0);
+                        }
+                    }
+                }
 
                 for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
                     $daily = $this->getDailyReportForDate($skpdId, $date->toDateString(), true);
@@ -497,6 +562,7 @@ class AbsensiScraperService
                 'date_end' => $endDate->toDateString(),
                 'skpd_start' => $startSkpdId,
                 'skpd_end' => $endSkpdId,
+                'skpd_ids' => $skpdIds,
             ],
             'summary' => [
                 'success_count' => $successCount,
@@ -527,28 +593,72 @@ class AbsensiScraperService
         $auth = $this->authenticatePortal($username, $password);
         $startSkpdId = max(1, $startSkpdId);
         $endSkpdId = max($startSkpdId, $endSkpdId);
-        $skpdActions = $this->fetchSkpdLoginActions($startSkpdId, $endSkpdId);
+        $skpdIds = $this->configuredSkpdIdsForRange($startSkpdId, $endSkpdId);
+        $skpdActions = $this->fetchSkpdLoginActionsForSkpdIds($skpdIds);
         $results = [];
         $storedPppk = 0;
+        $storedPppkParuhWaktu = 0;
+        $storedPns = 0;
         $storedReports = 0;
         $successCount = 0;
         $failedCount = 0;
 
-        for ($skpdId = $startSkpdId; $skpdId <= $endSkpdId; $skpdId++) {
+        foreach ($skpdIds as $index => $skpdId) {
             try {
-                if ($skpdId > $startSkpdId) {
+                if ($index > 0) {
                     $this->resetPortalSession();
                     $this->authenticatePortal($username, $password);
                 }
 
-                $skpdLogin = $this->loginAsSkpd($skpdId, $skpdActions[$skpdId] ?? null);
+                $skpdLogin = $this->loginForSkpdContext($skpdId, $skpdActions[$skpdId] ?? null);
+                $adminPegawai = $this->isPuskesmasVirtualSkpd($skpdId)
+                    ? $this->getAdminPegawaiData($skpdId, false, false)
+                    : null;
                 $pppk = $this->getPppkData($skpdId, true);
-                $storedForSkpd = (int) ($pppk['stored_rows'] ?? 0);
-                $storedReportsForSkpd = 0;
+                if ($adminPegawai !== null) {
+                    $pppkNips = collect($pppk['data']['rows'] ?? [])
+                        ->pluck('nip')
+                        ->map(fn ($nip) => preg_replace('/\D+/', '', (string) $nip))
+                        ->filter()
+                        ->unique()
+                        ->values();
+                    $this->removePppkRowsFromPegawaiMaster($skpdId, $pppkNips->all());
+                    $pnsRows = collect($adminPegawai['pns']['rows'] ?? [])
+                        ->reject(fn (array $person) => $pppkNips->contains(preg_replace('/\D+/', '', (string) ($person['nip'] ?? ''))))
+                        ->values()
+                        ->all();
+                    $adminPegawai['pns']['rows'] = $pnsRows;
+                    $adminPegawai['pns']['row_count'] = count($pnsRows);
+                    $adminPegawai['stored_pns_rows'] = $this->storePegawaiRows([
+                        'skpd_id' => $skpdId,
+                        'row_count' => count($pnsRows),
+                        'rows' => $pnsRows,
+                    ], [
+                        'fetched_at' => now(),
+                    ]);
+                    $adminPegawai['stored_pppk_rows'] = 0;
+                }
+                $pppkParuhWaktu = $this->isPuskesmasVirtualSkpd($skpdId)
+                    ? ['success' => true, 'stored_rows' => 0, 'data' => ['rows' => []]]
+                    : $this->getPppkParuhWaktuPegawaiData($skpdId, true);
+                if (! ($pppkParuhWaktu['success'] ?? false)) {
+                    throw new \RuntimeException((string) ($pppkParuhWaktu['message'] ?? 'Halaman pegawai PPPK Paruh Waktu tidak bisa diakses.'));
+                }
 
-                foreach (($pppk['data']['rows'] ?? []) as $person) {
-                    $pppkId = (string) ($person['pppk_id'] ?? '');
-                    if ($pppkId === '') {
+                $storedPnsForSkpd = (int) ($adminPegawai['stored_pns_rows'] ?? 0);
+                $storedForSkpd = (int) ($pppk['stored_rows'] ?? 0)
+                    + (int) ($pppkParuhWaktu['stored_rows'] ?? 0)
+                    + (int) ($adminPegawai['stored_pppk_rows'] ?? 0);
+                $storedParuhWaktuForSkpd = (int) ($pppkParuhWaktu['stored_rows'] ?? 0);
+                $storedReportsForSkpd = 0;
+                $people = $this->uniquePppkPeople(array_merge(
+                    is_array($pppk['data']['rows'] ?? null) ? $pppk['data']['rows'] : [],
+                    is_array($adminPegawai['pppk']['rows'] ?? null) ? $adminPegawai['pppk']['rows'] : [],
+                    is_array($pppkParuhWaktu['data']['rows'] ?? null) ? $pppkParuhWaktu['data']['rows'] : []
+                ));
+
+                foreach ($people as $person) {
+                    if (! $this->hasPppkPresensiTarget($person)) {
                         continue;
                     }
 
@@ -563,15 +673,22 @@ class AbsensiScraperService
                     }
                 }
 
+                $storedPns += $storedPnsForSkpd;
                 $storedPppk += $storedForSkpd;
+                $storedPppkParuhWaktu += $storedParuhWaktuForSkpd;
                 $storedReports += $storedReportsForSkpd;
                 $successCount++;
                 $results[] = [
                     'skpd_id' => $skpdId,
                     'success' => true,
+                    'stored_pns_rows' => $storedPnsForSkpd,
                     'stored_pppk_rows' => $storedForSkpd,
+                    'stored_pppk_paruh_waktu_rows' => $storedParuhWaktuForSkpd,
                     'stored_report_rows' => $storedReportsForSkpd,
                     'skpd_login' => $skpdLogin,
+                    'admin_pegawai_page' => $adminPegawai['page'] ?? null,
+                    'pppk_page' => $pppk['page'] ?? null,
+                    'pegawai_page' => $pppkParuhWaktu['page'] ?? null,
                 ];
             } catch (Throwable $throwable) {
                 $failedCount++;
@@ -601,11 +718,14 @@ class AbsensiScraperService
                 'date_end' => $dateEnd,
                 'skpd_start' => $startSkpdId,
                 'skpd_end' => $endSkpdId,
+                'skpd_ids' => $skpdIds,
             ],
             'summary' => [
                 'success_count' => $successCount,
                 'failed_count' => $failedCount,
+                'stored_pns_rows' => $storedPns,
                 'stored_pppk_rows' => $storedPppk,
+                'stored_pppk_paruh_waktu_rows' => $storedPppkParuhWaktu,
                 'stored_report_rows' => $storedReports,
                 'stored_rows' => $storedReports,
             ],
@@ -635,7 +755,8 @@ class AbsensiScraperService
         $parsed = $this->parseCutiHtml($body, $redact);
         $filtered = $this->filterCutiByDateRange($parsed, $dateStart, $dateEnd);
         $parsed = $filtered['cuti'];
-        $maxPage = $this->maxPaginationPage($body, self::ADMIN_CUTI_PATH);
+        $path = $this->cutiPath();
+        $maxPage = $this->maxPaginationPage($body, $path);
 
         for ($pageNumber = 2; $pageNumber <= $maxPage; $pageNumber++) {
             if ($filtered['all_dated_rows_before_start'] ?? false) {
@@ -654,7 +775,7 @@ class AbsensiScraperService
         }
 
         $this->saveCutiData($parsed, [
-            'path' => self::ADMIN_CUTI_PATH,
+            'path' => $path,
                 'skpd_id' => $skpdId,
                 'date_start' => $dateStart,
                 'date_end' => $dateEnd,
@@ -671,7 +792,7 @@ class AbsensiScraperService
         return [
             'success' => true,
             'page' => [
-                'path' => self::ADMIN_CUTI_PATH,
+                'path' => $path,
                 'status_code' => $page['status_code'],
                 'redirect_history' => $page['redirect_history'],
                 'body_preview' => $page['body_preview'],
@@ -684,6 +805,7 @@ class AbsensiScraperService
 
     public function loginAsSkpd(int $skpdId = self::DEFAULT_SKPD_ID, ?array $cachedAction = null): array
     {
+        $this->puskesmasContext = false;
         $listingPath = '/superadmin/skpd';
         $listing = $cachedAction['listing'] ?? null;
         $action = $cachedAction;
@@ -713,9 +835,10 @@ class AbsensiScraperService
 
         $response = $this->request($method, $path, $options);
         $body = (string) $response->getBody();
+        $success = ! $this->isLoginPage($body) && $response->getStatusCode() < 500;
 
         return [
-            'success' => ! $this->isLoginPage($body) && $response->getStatusCode() < 500,
+            'success' => $success,
             'action' => $action,
             'listing' => $listing,
             'path' => $path,
@@ -725,10 +848,67 @@ class AbsensiScraperService
         ];
     }
 
+    public function loginForSkpdContext(int $skpdId = self::DEFAULT_SKPD_ID, ?array $cachedAction = null): array
+    {
+        return $this->isPuskesmasVirtualSkpd($skpdId)
+            ? $this->loginAsPuskesmasUnit($skpdId, $cachedAction)
+            : $this->loginAsSkpd($skpdId, $cachedAction);
+    }
+
+    public function loginAsPuskesmasUnit(int $skpdId, ?array $cachedAction = null): array
+    {
+        $unit = $this->puskesmasUnit($skpdId);
+        if ($unit === null) {
+            throw new \RuntimeException('Konfigurasi unit puskesmas tidak ditemukan untuk SKPD ' . $skpdId . '.');
+        }
+
+        $parentSkpdId = (int) ($unit['parent_skpd_id'] ?? self::DEFAULT_SKPD_ID);
+        $parentLogin = $this->loginAsSkpd($parentSkpdId, $cachedAction['parent_action'] ?? null);
+        $page = $this->getPuskesmasPage();
+        $body = (string) ($page['body'] ?? '');
+        $action = $this->extractPuskesmasLoginAction($body, $unit);
+        $method = $action['method'] ?? 'GET';
+        $path = $action['url'] ?? self::ADMIN_PUSKESMAS_PATH;
+        $options = [
+            'headers' => [
+                'Referer' => $this->baseUrl . self::ADMIN_PUSKESMAS_PATH,
+            ],
+        ];
+
+        if ($method === 'POST') {
+            $options['form_params'] = $action['form_params'] ?? [];
+        }
+
+        $response = $this->request($method, $path, $options);
+        $responseBody = (string) $response->getBody();
+        $success = ($parentLogin['success'] ?? false)
+            && ! $this->isLoginPage($responseBody)
+            && $response->getStatusCode() < 500;
+        $this->puskesmasContext = $success;
+
+        return [
+            'success' => $success,
+            'type' => 'puskesmas',
+            'parent_skpd_id' => $parentSkpdId,
+            'parent_login' => $parentLogin,
+            'action' => $action,
+            'listing' => [
+                'path' => self::ADMIN_PUSKESMAS_PATH,
+                'status_code' => $page['status_code'] ?? null,
+                'redirect_history' => $page['redirect_history'] ?? [],
+            ],
+            'path' => $path,
+            'status_code' => $response->getStatusCode(),
+            'redirect_history' => $this->redirectHistory($response),
+            'body_preview' => $this->preview($responseBody),
+        ];
+    }
+
     public function getCutiPage(?string $dateStart = null, ?string $dateEnd = null, ?int $page = null): array
     {
         $options = [];
         $query = $this->buildDateRangeQuery($dateStart, $dateEnd);
+        $path = $this->cutiPath();
         if ($page !== null && $page > 1) {
             $query['page'] = $page;
         }
@@ -737,12 +917,27 @@ class AbsensiScraperService
             $options['query'] = $query;
         }
 
-        $response = $this->request('GET', self::ADMIN_CUTI_PATH, $options);
+        $response = $this->request('GET', $path, $options);
         $body = (string) $response->getBody();
 
         return [
             'success' => ! $this->isLoginPage($body) && ! $this->isSkpdListingPage($body) && $response->getStatusCode() === 200,
-            'path' => self::ADMIN_CUTI_PATH,
+            'path' => $path,
+            'status_code' => $response->getStatusCode(),
+            'redirect_history' => $this->redirectHistory($response),
+            'body' => $body,
+            'body_preview' => $this->preview($body),
+        ];
+    }
+
+    public function getPuskesmasPage(): array
+    {
+        $response = $this->request('GET', self::ADMIN_PUSKESMAS_PATH);
+        $body = (string) $response->getBody();
+
+        return [
+            'success' => ! $this->isLoginPage($body) && $response->getStatusCode() === 200,
+            'path' => self::ADMIN_PUSKESMAS_PATH,
             'status_code' => $response->getStatusCode(),
             'redirect_history' => $this->redirectHistory($response),
             'body' => $body,
@@ -770,6 +965,48 @@ class AbsensiScraperService
         ];
     }
 
+    public function getAdminPegawaiPage(?int $page = null): array
+    {
+        $options = [];
+        $path = $this->pegawaiPath();
+        if ($page !== null && $page > 1) {
+            $options['query'] = ['page' => $page];
+        }
+
+        $response = $this->request('GET', $path, $options);
+        $body = (string) $response->getBody();
+
+        return [
+            'success' => ! $this->isLoginPage($body) && ! $this->isSkpdListingPage($body) && $response->getStatusCode() === 200,
+            'path' => $path,
+            'status_code' => $response->getStatusCode(),
+            'redirect_history' => $this->redirectHistory($response),
+            'body' => $body,
+            'body_preview' => $this->preview($body),
+        ];
+    }
+
+    public function getPppkPage(?int $page = null): array
+    {
+        $options = [];
+        $path = $this->pppkPath();
+        if ($page !== null && $page > 1) {
+            $options['query'] = ['page' => $page];
+        }
+
+        $response = $this->request('GET', $path, $options);
+        $body = (string) $response->getBody();
+
+        return [
+            'success' => ! $this->isLoginPage($body) && ! $this->isSkpdListingPage($body) && $response->getStatusCode() === 200,
+            'path' => $path,
+            'status_code' => $response->getStatusCode(),
+            'redirect_history' => $this->redirectHistory($response),
+            'body' => $body,
+            'body_preview' => $this->preview($body),
+        ];
+    }
+
     public function getDailyReportForDate(int $skpdId, string $date, bool $persistToDatabase = false): array
     {
         $reportPage = $this->getLaporanPage();
@@ -789,7 +1026,7 @@ class AbsensiScraperService
                 'jenis' => 'pdf',
             ],
             'headers' => [
-                'Referer' => $this->baseUrl . self::ADMIN_LAPORAN_PATH,
+                'Referer' => $this->baseUrl . $this->laporanPath(),
             ],
         ]);
         $body = (string) $response->getBody();
@@ -828,12 +1065,13 @@ class AbsensiScraperService
 
     public function getLaporanPage(): array
     {
-        $response = $this->request('GET', self::ADMIN_LAPORAN_PATH);
+        $path = $this->laporanPath();
+        $response = $this->request('GET', $path);
         $body = (string) $response->getBody();
 
         return [
             'success' => ! $this->isLoginPage($body) && $response->getStatusCode() === 200,
-            'path' => self::ADMIN_LAPORAN_PATH,
+            'path' => $path,
             'status_code' => $response->getStatusCode(),
             'redirect_history' => $this->redirectHistory($response),
             'body' => $body,
@@ -843,24 +1081,167 @@ class AbsensiScraperService
 
     public function getPppkData(int $skpdId, bool $persistToDatabase = false): array
     {
-        $response = $this->request('GET', self::ADMIN_PPPK_PATH);
-        $body = (string) $response->getBody();
+        $page = $this->getPppkPage();
+        $body = (string) ($page['body'] ?? '');
         $parsed = $this->parsePppkHtml($body, $skpdId);
+        $path = $this->pppkPath();
+        $maxPage = $this->maxPaginationPage($body, $path);
+
+        for ($pageNumber = 2; $pageNumber <= $maxPage; $pageNumber++) {
+            $nextPage = $this->getPppkPage($pageNumber);
+            if (! ($nextPage['success'] ?? false)) {
+                break;
+            }
+
+            $nextBody = is_string($nextPage['body'] ?? null) ? (string) $nextPage['body'] : '';
+            $parsed = $this->mergePppkData($parsed, $this->parsePppkHtml($nextBody, $skpdId));
+        }
+
         $storedRows = $persistToDatabase ? $this->storePppkRows($parsed, [
             'skpd_id' => $skpdId,
             'fetched_at' => now(),
         ]) : 0;
 
         return [
-            'success' => ! $this->isLoginPage($body) && $response->getStatusCode() === 200,
+            'success' => (bool) ($page['success'] ?? false),
             'page' => [
-                'path' => self::ADMIN_PPPK_PATH,
-                'status_code' => $response->getStatusCode(),
-                'redirect_history' => $this->redirectHistory($response),
-                'body_preview' => $this->preview($body),
+                'path' => $path,
+                'status_code' => $page['status_code'] ?? null,
+                'redirect_history' => $page['redirect_history'] ?? [],
+                'body_preview' => $page['body_preview'] ?? null,
+                'max_page' => $maxPage,
             ],
             'data' => $parsed,
             'stored_rows' => $storedRows,
+        ];
+    }
+
+    public function getPppkParuhWaktuPegawaiData(int $skpdId, bool $persistToDatabase = false): array
+    {
+        $page = $this->getAdminPegawaiPage();
+        if (! ($page['success'] ?? false)) {
+            return [
+                'success' => false,
+                'message' => 'Halaman pegawai SKPD tidak bisa diakses.',
+                'page' => $page,
+                'data' => [
+                    'skpd_id' => $skpdId,
+                    'row_count' => 0,
+                    'rows' => [],
+                ],
+                'stored_rows' => 0,
+            ];
+        }
+
+        $body = is_string($page['body'] ?? null) ? (string) $page['body'] : '';
+        $parsed = $this->parseAdminPegawaiPppkParuhWaktuHtml($body, $skpdId);
+        $path = $this->pegawaiPath();
+        $maxPage = $this->maxPaginationPage($body, $path);
+
+        for ($pageNumber = 2; $pageNumber <= $maxPage; $pageNumber++) {
+            $nextPage = $this->getAdminPegawaiPage($pageNumber);
+            if (! ($nextPage['success'] ?? false)) {
+                break;
+            }
+
+            $nextBody = is_string($nextPage['body'] ?? null) ? (string) $nextPage['body'] : '';
+            $parsed = $this->mergePppkData($parsed, $this->parseAdminPegawaiPppkParuhWaktuHtml($nextBody, $skpdId));
+        }
+
+        $storedRows = $persistToDatabase ? $this->storePppkRows($parsed, [
+            'skpd_id' => $skpdId,
+            'fetched_at' => now(),
+        ]) : 0;
+
+        return [
+            'success' => true,
+            'page' => [
+                'path' => $path,
+                'status_code' => $page['status_code'],
+                'redirect_history' => $page['redirect_history'],
+                'body_preview' => $page['body_preview'],
+                'max_page' => $maxPage,
+            ],
+            'data' => $parsed,
+            'stored_rows' => $storedRows,
+        ];
+    }
+
+    public function getAdminPegawaiData(int $skpdId, bool $persistPnsToDatabase = false, bool $persistPppkToDatabase = false): array
+    {
+        $page = $this->getAdminPegawaiPage();
+        if (! ($page['success'] ?? false)) {
+            return [
+                'success' => false,
+                'message' => 'Halaman pegawai SKPD tidak bisa diakses.',
+                'page' => $page,
+                'data' => [
+                    'skpd_id' => $skpdId,
+                    'row_count' => 0,
+                    'rows' => [],
+                ],
+                'pns' => ['row_count' => 0, 'rows' => []],
+                'pppk' => ['row_count' => 0, 'rows' => []],
+                'stored_pns_rows' => 0,
+                'stored_pppk_rows' => 0,
+            ];
+        }
+
+        $body = is_string($page['body'] ?? null) ? (string) $page['body'] : '';
+        $parsed = $this->parseAdminPegawaiHtml($body, $skpdId);
+        $path = $this->pegawaiPath();
+        $maxPage = $this->maxPaginationPage($body, $path);
+
+        for ($pageNumber = 2; $pageNumber <= $maxPage; $pageNumber++) {
+            $nextPage = $this->getAdminPegawaiPage($pageNumber);
+            if (! ($nextPage['success'] ?? false)) {
+                break;
+            }
+
+            $nextBody = is_string($nextPage['body'] ?? null) ? (string) $nextPage['body'] : '';
+            $parsed = $this->mergePegawaiData($parsed, $this->parseAdminPegawaiHtml($nextBody, $skpdId));
+        }
+
+        $pnsRows = collect($parsed['rows'] ?? [])
+            ->filter(fn (array $row) => ! $this->isPppkStatus($row['status_asn'] ?? null))
+            ->values()
+            ->all();
+        $pppkRows = collect($parsed['rows'] ?? [])
+            ->filter(fn (array $row) => $this->isPppkStatus($row['status_asn'] ?? null))
+            ->values()
+            ->all();
+        $pns = [
+            'skpd_id' => $skpdId,
+            'row_count' => count($pnsRows),
+            'rows' => $pnsRows,
+        ];
+        $pppk = [
+            'skpd_id' => $skpdId,
+            'kode_skpd' => $parsed['kode_skpd'] ?? null,
+            'nama_skpd' => $parsed['nama_skpd'] ?? null,
+            'row_count' => count($pppkRows),
+            'rows' => $pppkRows,
+        ];
+
+        return [
+            'success' => true,
+            'page' => [
+                'path' => $path,
+                'status_code' => $page['status_code'],
+                'redirect_history' => $page['redirect_history'],
+                'body_preview' => $page['body_preview'],
+                'max_page' => $maxPage,
+            ],
+            'data' => $parsed,
+            'pns' => $pns,
+            'pppk' => $pppk,
+            'stored_pns_rows' => $persistPnsToDatabase ? $this->storePegawaiRows($pns, [
+                'fetched_at' => now(),
+            ]) : 0,
+            'stored_pppk_rows' => $persistPppkToDatabase ? $this->storePppkRows($pppk, [
+                'skpd_id' => $skpdId,
+                'fetched_at' => now(),
+            ]) : 0,
         ];
     }
 
@@ -1095,7 +1476,7 @@ class AbsensiScraperService
 
     protected function parseCutiHtml(string $html, bool $redact): array
     {
-        $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_CUTI_PATH);
+        $crawler = $this->createCrawler($html, $this->baseUrl . $this->cutiPath());
         $title = trim($crawler->filter('title')->first()->text(''));
         $tables = [];
 
@@ -1190,7 +1571,7 @@ class AbsensiScraperService
 
     protected function parsePppkHtml(string $html, int $skpdId): array
     {
-        $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_PPPK_PATH);
+        $crawler = $this->createCrawler($html, $this->baseUrl . $this->pppkPath());
         $skpd = $this->skpdInfo($skpdId);
         $rows = [];
 
@@ -1225,7 +1606,7 @@ class AbsensiScraperService
                 }
 
                 $presensiUrl = $href;
-                if (preg_match('/\/admin\/pppk\/([^\/]+)\/presensi/i', $href, $matches)) {
+                if (preg_match('/\/(?:admin|puskesmas)\/pppk\/([^\/]+)\/presensi/i', $href, $matches)) {
                     $pppkId = $matches[1];
                 }
             });
@@ -1236,6 +1617,7 @@ class AbsensiScraperService
                 'skpd_id' => $skpdId,
                 'kode_skpd' => $skpd['kode'],
                 'nama_skpd' => $skpd['nama'],
+                'unit_kerja' => $skpd['nama'],
                 'nip' => $nip,
                 'nama' => $nama,
                 'jabatan' => $jabatan,
@@ -1244,6 +1626,7 @@ class AbsensiScraperService
                 'jenis_presensi' => $this->normalizeText($cells[4][0] ?? ''),
                 'status_asn' => $this->normalizeText($cells[5][0] ?? ''),
                 'presensi_url' => $presensiUrl,
+                'source' => 'admin_pppk',
             ];
         });
 
@@ -1251,6 +1634,128 @@ class AbsensiScraperService
             'skpd_id' => $skpdId,
             'kode_skpd' => $skpd['kode'],
             'nama_skpd' => $skpd['nama'],
+            'row_count' => count($rows),
+            'rows' => $rows,
+        ];
+    }
+
+    protected function parseAdminPegawaiHtml(string $html, int $skpdId): array
+    {
+        $crawler = $this->createCrawler($html, $this->baseUrl . $this->pegawaiPath());
+        $skpd = $this->skpdInfo($skpdId);
+        $unitName = $skpd['nama'] ?? null;
+        $rows = [];
+
+        $crawler->filter('table tbody tr')->each(function (Crawler $row) use (&$rows, $skpdId, $skpd, $unitName) {
+            if ($row->filter('td')->count() === 0) {
+                return;
+            }
+
+            $cells = [];
+            $row->filter('td')->each(function (Crawler $cell) use (&$cells) {
+                $cells[] = $this->cellLines($cell);
+            });
+
+            $isPuskesmas = $this->puskesmasContext;
+            $statusAsn = $isPuskesmas
+                ? 'PNS'
+                : $this->normalizeText(implode(' ', $cells[6] ?? ($cells[array_key_last($cells)] ?? [])));
+            $aksi = $this->normalizeText(implode(' ', $cells[$isPuskesmas ? 6 : 5] ?? []));
+            if ($this->isInactiveAdminPegawaiRow($statusAsn, $aksi)) {
+                return;
+            }
+
+            $identity = $cells[1] ?? [];
+            [$nama, $nip] = $this->splitNameAndNip($identity);
+            $jabatan = $this->normalizeText(implode(' ', array_slice($identity, 2)));
+            if ($jabatan === '' && count($identity) === 1) {
+                $text = $this->normalizeText($identity[0]);
+                if (preg_match('/^(.+?)(\d{18})(.+)$/u', $text, $matches)) {
+                    $nama = $this->normalizeText($matches[1]);
+                    $nip = $this->normalizeText($matches[2]);
+                    $jabatan = $this->normalizeText($matches[3]);
+                }
+            }
+
+            $presensiUrl = null;
+            $historyUrl = null;
+            $pegawaiId = null;
+            $row->filter('a[href]')->each(function (Crawler $link) use (&$presensiUrl, &$historyUrl, &$pegawaiId) {
+                $href = trim((string) $link->attr('href'));
+                if ($href === '') {
+                    return;
+                }
+
+                if (str_contains($href, '/presensi')) {
+                    $presensiUrl ??= $href;
+                    if ($pegawaiId === null && preg_match('/\/(?:admin|puskesmas)\/pegawai\/([^\/]+)\/presensi/i', $href, $matches)) {
+                        $pegawaiId = $matches[1];
+                    }
+                }
+
+                if (str_contains($href, '/history')) {
+                    $historyUrl ??= $href;
+                    if ($pegawaiId === null && preg_match('/\/pegawai\/([^\/]+)\/history/i', $href, $matches)) {
+                        $pegawaiId = $matches[1];
+                    }
+                }
+
+                if ($pegawaiId === null && preg_match('/\/(?:admin|puskesmas)\/pegawai\/([^\/]+)\/edit/i', $href, $matches)) {
+                    $pegawaiId = $matches[1];
+                }
+            });
+
+            $pangkat = $this->normalizeText(implode(' ', $cells[2] ?? []));
+            $lokasiPresensi = $this->normalizeText(implode(' ', $cells[4] ?? []));
+            $jenisPresensi = $this->normalizeText(implode(' ', $cells[$isPuskesmas ? 5 : 4] ?? []));
+
+            $rows[] = [
+                'nomor' => $this->normalizeText($cells[0][0] ?? ''),
+                'pegawai_id' => $pegawaiId,
+                'pppk_id' => $pegawaiId !== null ? 'pegawai:' . $pegawaiId : null,
+                'skpd_id' => $skpdId,
+                'kode_skpd' => $skpd['kode'],
+                'nama_skpd' => $skpd['nama'],
+                'nip' => $nip,
+                'nama' => $nama,
+                'pangkat' => $pangkat,
+                'pangkat_golongan' => $pangkat,
+                'skpd' => trim((string) (($skpd['kode'] ?? '') . ' ' . ($skpd['nama'] ?? ''))),
+                'unit_kerja' => $isPuskesmas ? ($lokasiPresensi ?: $unitName) : $unitName,
+                'jabatan' => $jabatan,
+                'puskesmas' => $this->isPuskesmasVirtualSkpd($skpdId) ? ($lokasiPresensi ?: $unitName) : null,
+                'tanggal_lahir' => $this->normalizeDateValue($cells[3][0] ?? null),
+                'jenis_presensi' => $jenisPresensi,
+                'status_asn' => $statusAsn,
+                'status_pegawai' => $aksi,
+                'device_id' => null,
+                'history_url' => $historyUrl,
+                'presensi_url' => $presensiUrl,
+                'source' => 'admin_pegawai',
+            ];
+        });
+
+        return [
+            'skpd_id' => $skpdId,
+            'kode_skpd' => $skpd['kode'],
+            'nama_skpd' => $skpd['nama'],
+            'row_count' => count($rows),
+            'rows' => $rows,
+        ];
+    }
+
+    protected function parseAdminPegawaiPppkParuhWaktuHtml(string $html, int $skpdId): array
+    {
+        $parsed = $this->parseAdminPegawaiHtml($html, $skpdId);
+        $rows = collect($parsed['rows'] ?? [])
+            ->filter(fn (array $row) => $this->isPppkParuhWaktuStatus($row['status_asn'] ?? null))
+            ->values()
+            ->all();
+
+        return [
+            'skpd_id' => $skpdId,
+            'kode_skpd' => $parsed['kode_skpd'] ?? null,
+            'nama_skpd' => $parsed['nama_skpd'] ?? null,
             'row_count' => count($rows),
             'rows' => $rows,
         ];
@@ -1265,12 +1770,11 @@ class AbsensiScraperService
         ?string $dateStart = null,
         ?string $dateEnd = null
     ): array {
-        $pppkId = (string) ($person['pppk_id'] ?? '');
-        if ($pppkId === '') {
-            return ['success' => false, 'message' => 'ID PPPK kosong.', 'stored_rows' => 0];
+        $path = $this->pppkPresensiPath($person, $month, $year);
+        if ($path === null) {
+            return ['success' => false, 'message' => 'URL presensi PPPK kosong.', 'stored_rows' => 0];
         }
 
-        $path = self::ADMIN_PPPK_PATH . '/' . $pppkId . '/presensi/' . str_pad($month, 2, '0', STR_PAD_LEFT) . '/' . $year;
         $response = $this->request('GET', $path);
         $body = (string) $response->getBody();
         $parsed = $this->parsePppkPresensiHtml($body, $skpdId, $person);
@@ -1294,9 +1798,98 @@ class AbsensiScraperService
         ];
     }
 
+    public function getPegawaiMonthlyPresensi(
+        int $skpdId,
+        array $person,
+        string $month,
+        string $year,
+        bool $persistToDatabase = false,
+        ?string $dateStart = null,
+        ?string $dateEnd = null
+    ): array {
+        $path = $this->pegawaiPresensiPath($person, $month, $year);
+        if ($path === null) {
+            return ['success' => false, 'message' => 'URL presensi pegawai kosong.', 'stored_rows' => 0];
+        }
+
+        $response = $this->request('GET', $path);
+        $body = (string) $response->getBody();
+        $parsed = $this->parsePegawaiPresensiHtml($body, $skpdId, $person);
+        $storedRows = $persistToDatabase ? $this->storePegawaiPresensiRows($parsed, [
+            'skpd_id' => $skpdId,
+            'fetched_at' => now(),
+            'date_start' => $dateStart,
+            'date_end' => $dateEnd,
+        ]) : 0;
+
+        return [
+            'success' => ! $this->isLoginPage($body) && $response->getStatusCode() === 200,
+            'page' => [
+                'path' => $path,
+                'status_code' => $response->getStatusCode(),
+                'redirect_history' => $this->redirectHistory($response),
+                'body_preview' => $this->preview($body),
+            ],
+            'report' => $parsed,
+            'stored_rows' => $storedRows,
+        ];
+    }
+
+    protected function pppkPresensiPath(array $person, string $month, string $year): ?string
+    {
+        $month = str_pad($month, 2, '0', STR_PAD_LEFT);
+        $presensiUrl = trim((string) ($person['presensi_url'] ?? ''));
+
+        if ($presensiUrl !== '') {
+            $path = parse_url($presensiUrl, PHP_URL_PATH);
+            $path = is_string($path) && $path !== '' ? $path : $presensiUrl;
+
+            if (preg_match('#^(.*/presensi)(?:/\d{1,2}/\d{4})?/?$#i', $path, $matches) === 1) {
+                return rtrim($matches[1], '/') . '/' . $month . '/' . $year;
+            }
+        }
+
+        $pppkId = trim((string) ($person['pppk_id'] ?? ''));
+        if ($pppkId === '') {
+            return null;
+        }
+
+        if (str_starts_with($pppkId, 'pegawai:')) {
+            $pegawaiId = trim(substr($pppkId, strlen('pegawai:')));
+
+            return $pegawaiId !== ''
+                ? $this->pegawaiPath() . '/' . rawurlencode($pegawaiId) . '/presensi/' . $month . '/' . $year
+                : null;
+        }
+
+        return $this->pppkPath() . '/' . rawurlencode($pppkId) . '/presensi/' . $month . '/' . $year;
+    }
+
+    protected function pegawaiPresensiPath(array $person, string $month, string $year): ?string
+    {
+        $month = str_pad($month, 2, '0', STR_PAD_LEFT);
+        $presensiUrl = trim((string) ($person['presensi_url'] ?? ''));
+
+        if ($presensiUrl !== '') {
+            $path = parse_url($presensiUrl, PHP_URL_PATH);
+            $path = is_string($path) && $path !== '' ? $path : $presensiUrl;
+
+            if (preg_match('#^(.*/presensi)(?:/\d{1,2}/\d{4})?/?$#i', $path, $matches) === 1) {
+                return rtrim($matches[1], '/') . '/' . $month . '/' . $year;
+            }
+        }
+
+        $pegawaiId = trim((string) ($person['pegawai_id'] ?? ''));
+        if ($pegawaiId === '') {
+            return null;
+        }
+
+        return $this->pegawaiPath() . '/' . rawurlencode($pegawaiId) . '/presensi/' . $month . '/' . $year;
+    }
+
     protected function parsePppkPresensiHtml(string $html, int $skpdId, array $person): array
     {
-        $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_PPPK_PATH);
+        $crawler = $this->createCrawler($html, $this->baseUrl . $this->pppkPath());
         $skpd = $this->skpdInfo($skpdId);
         $rows = [];
 
@@ -1339,6 +1932,7 @@ class AbsensiScraperService
             'skpd_id' => $skpdId,
             'kode_skpd' => $skpd['kode'],
             'nama_skpd' => $skpd['nama'],
+            'unit_kerja' => $person['unit_kerja'] ?? null,
             'nip' => $person['nip'] ?? null,
             'nama_pegawai' => $person['nama'] ?? null,
             'jabatan' => $person['jabatan'] ?? null,
@@ -1347,9 +1941,28 @@ class AbsensiScraperService
         ];
     }
 
+    protected function parsePegawaiPresensiHtml(string $html, int $skpdId, array $person): array
+    {
+        $parsed = $this->parsePppkPresensiHtml($html, $skpdId, $person);
+
+        return [
+            'pegawai_id' => $person['pegawai_id'] ?? null,
+            'skpd_id' => $skpdId,
+            'kode_skpd' => $parsed['kode_skpd'] ?? null,
+            'nama_skpd' => $parsed['nama_skpd'] ?? null,
+            'unit_kerja' => $person['unit_kerja'] ?? null,
+            'nip' => $person['nip'] ?? null,
+            'nama_pegawai' => $person['nama'] ?? null,
+            'pangkat' => ($person['pangkat_golongan'] ?? null) ?: ($person['pangkat'] ?? null),
+            'jabatan' => $person['jabatan'] ?? null,
+            'row_count' => count($parsed['rows'] ?? []),
+            'rows' => $parsed['rows'] ?? [],
+        ];
+    }
+
     protected function parseDailyReportHtml(string $html, int $skpdId, string $date): array
     {
-        $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_LAPORAN_TANGGAL_PATH);
+        $crawler = $this->createCrawler($html, $this->baseUrl . $this->laporanTanggalPath());
         $title = $this->normalizeText($crawler->filter('p strong')->first()->text(''));
         $hari = null;
         $tanggalLabel = null;
@@ -1506,6 +2119,70 @@ class AbsensiScraperService
         return $stored;
     }
 
+    protected function storePegawaiPresensiRows(array $report, array $meta): int
+    {
+        $stored = 0;
+        $rows = is_array($report['rows'] ?? null) ? $report['rows'] : [];
+        $skpdId = (int) ($report['skpd_id'] ?? $meta['skpd_id'] ?? self::DEFAULT_SKPD_ID);
+        $dateStart = $this->normalizeDateValue($meta['date_start'] ?? null);
+        $dateEnd = $this->normalizeDateValue($meta['date_end'] ?? null);
+
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            $tanggal = $this->normalizeDateValue((string) ($row['tanggal'] ?? ''));
+            if ($tanggal === null) {
+                continue;
+            }
+
+            if ($dateStart !== null && $tanggal < $dateStart) {
+                continue;
+            }
+
+            if ($dateEnd !== null && $tanggal > $dateEnd) {
+                continue;
+            }
+
+            $rowHash = hash('sha256', json_encode([
+                'skpd_id' => $skpdId,
+                'tanggal' => $tanggal,
+                'nip' => $report['nip'] ?? null,
+                'source' => 'pegawai_presensi',
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            $jamMasuk = $this->normalizeText((string) ($row['jam_masuk'] ?? ''));
+
+            AbsensiDailyReport::query()->updateOrCreate(
+                ['row_hash' => $rowHash],
+                [
+                    'skpd_id' => $skpdId,
+                    'kode_skpd' => $report['kode_skpd'] ?? null,
+                    'nama_skpd' => $report['nama_skpd'] ?? null,
+                    'tanggal' => $tanggal,
+                    'hari' => $row['hari'] ?? null,
+                    'nama_pegawai' => ($report['nama_pegawai'] ?? null) ?: null,
+                    'nip' => ($report['nip'] ?? null) ?: null,
+                    'pangkat' => ($report['pangkat'] ?? null) ?: null,
+                    'jabatan' => ($report['jabatan'] ?? null) ?: null,
+                    'pagi' => $jamMasuk !== '' ? $jamMasuk : null,
+                    'pulang' => ($row['jam_pulang'] ?? null) ?: null,
+                    'apel' => $jamMasuk !== '' ? $jamMasuk : null,
+                    'apel_hari_besar' => null,
+                    'row_data' => [
+                        'source' => 'pegawai_presensi',
+                        'unit_kerja' => $report['unit_kerja'] ?? null,
+                        'row' => $row,
+                    ],
+                    'fetched_at' => $meta['fetched_at'] ?? now(),
+                ]
+            );
+            $stored++;
+        }
+
+        return $stored;
+    }
+
     protected function storePppkRows(array $report, array $meta): int
     {
         $stored = 0;
@@ -1524,7 +2201,9 @@ class AbsensiScraperService
             ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
             $nip = ($row['nip'] ?? null) ?: null;
-            $unitKerja = $this->setdaPppkUnitKerjaByNip($nip);
+            $unitKerja = ($row['unit_kerja'] ?? null)
+                ?: $this->setdaPppkUnitKerjaByNip($nip)
+                ?: ($row['nama_skpd'] ?? null);
 
             AbsensiPppk::query()->updateOrCreate(
                 $nip !== null ? ['nip' => $nip] : ['row_hash' => $rowHash],
@@ -1586,7 +2265,9 @@ class AbsensiScraperService
             ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
             $nip = ($report['nip'] ?? null) ?: null;
-            $unitKerja = $this->setdaPppkUnitKerjaByNip($nip);
+            $unitKerja = ($report['unit_kerja'] ?? null)
+                ?: $this->setdaPppkUnitKerjaByNip($nip)
+                ?: ($report['nama_skpd'] ?? null);
 
             AbsensiPppkReport::query()->updateOrCreate(
                 ['row_hash' => $rowHash],
@@ -1644,12 +2325,14 @@ class AbsensiScraperService
 
     protected function extractDailyReportPrintForm(string $html): array
     {
-        $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_LAPORAN_PATH);
+        $crawler = $this->createCrawler($html, $this->baseUrl . $this->laporanPath());
         $form = $crawler->filter('form')->reduce(function (Crawler $form) {
             $action = strtolower((string) $form->attr('action'));
             $text = strtolower($this->normalizeText($form->text('')));
 
             return str_contains($action, '/admin/laporan/tanggal')
+                || str_contains($action, '/puskesmas/laporan/tanggal')
+                || str_contains($action, '/laporan/tanggal')
                 || (str_contains($text, 'print') && $form->filter('input[name="tanggal"]')->count() > 0);
         })->first();
 
@@ -1658,7 +2341,7 @@ class AbsensiScraperService
         }
 
         $method = strtoupper(trim((string) $form->attr('method')) ?: 'GET');
-        $action = trim((string) $form->attr('action')) ?: self::ADMIN_LAPORAN_TANGGAL_PATH;
+        $action = trim((string) $form->attr('action')) ?: $this->laporanTanggalPath();
         $token = trim((string) $form->filter('input[name="_token"]')->first()->attr('value'));
 
         if ($token === '') {
@@ -1782,6 +2465,177 @@ class AbsensiScraperService
         return $base;
     }
 
+    protected function mergePppkData(array $base, array $next): array
+    {
+        $baseRows = is_array($base['rows'] ?? null) ? $base['rows'] : [];
+        $nextRows = is_array($next['rows'] ?? null) ? $next['rows'] : [];
+        $base['rows'] = array_merge($baseRows, $nextRows);
+        $base['row_count'] = count($base['rows']);
+
+        return $base;
+    }
+
+    protected function uniquePppkPeople(array $rows): array
+    {
+        $unique = [];
+
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            $key = (string) (($row['nip'] ?? null) ?: ($row['pppk_id'] ?? null) ?: ($row['presensi_url'] ?? null));
+            if ($key === '') {
+                continue;
+            }
+
+            if (isset($unique[$key])) {
+                $existing = $unique[$key];
+                $rowIsParuhWaktu = $this->isPppkParuhWaktuStatus($row['status_asn'] ?? null);
+                $existingIsParuhWaktu = $this->isPppkParuhWaktuStatus($existing['status_asn'] ?? null);
+
+                if ((! $existingIsParuhWaktu && $rowIsParuhWaktu)
+                    || (! $this->hasPppkPresensiTarget($existing) && $this->hasPppkPresensiTarget($row))) {
+                    $unique[$key] = $row;
+                }
+
+                continue;
+            }
+
+            $unique[$key] = $row;
+        }
+
+        return array_values($unique);
+    }
+
+    protected function hasPppkPresensiTarget(array $person): bool
+    {
+        return trim((string) ($person['presensi_url'] ?? '')) !== ''
+            || trim((string) ($person['pppk_id'] ?? '')) !== '';
+    }
+
+    protected function hasPegawaiPresensiTarget(array $person): bool
+    {
+        return trim((string) ($person['presensi_url'] ?? '')) !== ''
+            || trim((string) ($person['pegawai_id'] ?? '')) !== '';
+    }
+
+    protected function isPppkStatus(?string $value): bool
+    {
+        return str_contains(strtolower($this->normalizeText((string) $value)), 'pppk');
+    }
+
+    protected function isInactiveAdminPegawaiRow(?string $statusAsn, ?string $aksi): bool
+    {
+        $value = strtolower($this->normalizeText((string) $statusAsn . ' ' . (string) $aksi));
+
+        return str_contains($value, 'pensiun')
+            || str_contains($value, 'mutasi')
+            || str_contains($value, 'meninggal');
+    }
+
+    protected function configuredSkpdIdsForRange(int $startSkpdId, int $endSkpdId): array
+    {
+        $configured = $this->configValue('services.absensi.skpd', []);
+        if (! is_array($configured) || $configured === []) {
+            return range($startSkpdId, $endSkpdId);
+        }
+
+        $ids = [];
+        foreach (array_keys($configured) as $id) {
+            $id = (int) $id;
+            if ($id >= $startSkpdId && $id <= $endSkpdId) {
+                $ids[] = $id;
+            }
+        }
+
+        sort($ids);
+
+        return $ids !== [] ? $ids : range($startSkpdId, $endSkpdId);
+    }
+
+    protected function isPuskesmasVirtualSkpd(int $skpdId): bool
+    {
+        return $this->puskesmasUnit($skpdId) !== null;
+    }
+
+    protected function puskesmasUnit(int $skpdId): ?array
+    {
+        $unit = $this->configValue('services.absensi.puskesmas_units.' . $skpdId, null);
+
+        return is_array($unit) ? $unit : null;
+    }
+
+    protected function removePppkRowsFromPegawaiMaster(int $skpdId, array $pppkNips): void
+    {
+        $pppkNips = collect($pppkNips)
+            ->map(fn ($nip) => preg_replace('/\D+/', '', (string) $nip))
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($pppkNips->isEmpty()) {
+            return;
+        }
+
+        $skpd = $this->skpdInfo($skpdId);
+        $unitName = (string) ($skpd['nama'] ?? '');
+        $query = AbsensiPegawai::query()->whereIn('nip', $pppkNips->all());
+
+        if ($unitName !== '') {
+            $query->where(function ($builder) use ($unitName) {
+                $builder
+                    ->where('skpd', 'like', '%' . $unitName . '%')
+                    ->orWhere('unit_kerja', 'like', '%' . $unitName . '%')
+                    ->orWhere('puskesmas', 'like', '%' . $unitName . '%');
+            });
+        }
+
+        $query->delete();
+    }
+
+    protected function removePppkRowsFromDailyReports(int $skpdId, array $pppkNips, ?string $dateStart = null, ?string $dateEnd = null): void
+    {
+        $pppkNips = collect($pppkNips)
+            ->map(fn ($nip) => preg_replace('/\D+/', '', (string) $nip))
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($pppkNips->isEmpty()) {
+            return;
+        }
+
+        $query = AbsensiDailyReport::query()
+            ->where('skpd_id', $skpdId)
+            ->whereIn('nip', $pppkNips->all());
+
+        $dateStart = $this->normalizeDateValue($dateStart);
+        $dateEnd = $this->normalizeDateValue($dateEnd);
+
+        if ($dateStart !== null) {
+            $query->whereDate('tanggal', '>=', $dateStart);
+        }
+
+        if ($dateEnd !== null) {
+            $query->whereDate('tanggal', '<=', $dateEnd);
+        }
+
+        $query->delete();
+    }
+
+    protected function isPppkParuhWaktuStatus(?string $value): bool
+    {
+        $value = strtolower($this->normalizeText((string) $value));
+
+        return $value === 'pppk paruh waktu'
+            || str_contains($value, 'pppk paruh waktu')
+            || str_contains($value, 'paruh waktu')
+            || str_contains($value, 'paruh_waktu')
+            || str_contains($value, 'part time')
+            || str_contains($value, 'part-time');
+    }
+
     protected function storePegawaiRows(array $pegawai, array $meta): int
     {
         $stored = 0;
@@ -1798,7 +2652,7 @@ class AbsensiScraperService
 
             $historyUrl = (string) ($row['history_url'] ?? '');
             preg_match('/\/pegawai\/([^\/]+)\/history/i', $historyUrl, $matches);
-            $pegawaiId = $matches[1] ?? null;
+            $pegawaiId = ($row['pegawai_id'] ?? null) ?: ($matches[1] ?? null);
             $rowHash = $pegawaiId !== null
                 ? hash('sha256', 'pegawai:' . $pegawaiId)
                 : hash('sha256', json_encode([
@@ -1815,6 +2669,7 @@ class AbsensiScraperService
                     'nama' => $row['nama'] ?: null,
                     'pangkat_golongan' => $row['pangkat_golongan'] ?: null,
                     'skpd' => $row['skpd'] ?: null,
+                    'unit_kerja' => ($row['unit_kerja'] ?? null) ?: null,
                     'jabatan' => $row['jabatan'] ?: null,
                     'puskesmas' => $row['puskesmas'] ?: null,
                     'device_id' => $row['device_id'] ?: null,
@@ -2007,7 +2862,7 @@ class AbsensiScraperService
                     $links[] = [
                         'header' => $headers[$cellIndex] ?? 'column_' . ($cellIndex + 1),
                         'label' => $this->normalizeText($link->text('')) ?: $href,
-                        'url' => $this->resolveUrl($href, $this->baseUrl . self::ADMIN_CUTI_PATH) ?? $href,
+                        'url' => $this->resolveUrl($href, $this->baseUrl . $this->cutiPath()) ?? $href,
                     ];
                 });
             });
@@ -2308,6 +3163,7 @@ class AbsensiScraperService
 
     protected function resetPortalSession(): void
     {
+        $this->puskesmasContext = false;
         $this->cookieJar = CookieJar::fromArray([], $this->cookieHost());
         $this->syncCookiesToLaravelSession();
     }
@@ -2401,6 +3257,31 @@ class AbsensiScraperService
         return '/superadmin/skpd/' . max(1, $skpdId) . '/login';
     }
 
+    protected function cutiPath(): string
+    {
+        return $this->puskesmasContext ? '/puskesmas/cuti' : self::ADMIN_CUTI_PATH;
+    }
+
+    protected function laporanPath(): string
+    {
+        return $this->puskesmasContext ? '/puskesmas/laporan' : self::ADMIN_LAPORAN_PATH;
+    }
+
+    protected function laporanTanggalPath(): string
+    {
+        return $this->puskesmasContext ? '/puskesmas/laporan/tanggal' : self::ADMIN_LAPORAN_TANGGAL_PATH;
+    }
+
+    protected function pegawaiPath(): string
+    {
+        return $this->puskesmasContext ? '/puskesmas/pegawai' : self::ADMIN_PEGAWAI_PATH;
+    }
+
+    protected function pppkPath(): string
+    {
+        return $this->puskesmasContext ? '/puskesmas/pppk' : self::ADMIN_PPPK_PATH;
+    }
+
     protected function fetchSkpdLoginActions(int $startSkpdId, int $endSkpdId): array
     {
         $listingPath = '/superadmin/skpd';
@@ -2415,6 +3296,36 @@ class AbsensiScraperService
                 'status_code' => $listingResponse->getStatusCode(),
                 'redirect_history' => $this->redirectHistory($listingResponse),
             ];
+        }
+
+        return $actions;
+    }
+
+    protected function fetchSkpdLoginActionsForSkpdIds(array $skpdIds): array
+    {
+        $listingPath = '/superadmin/skpd';
+        $listingResponse = $this->request('GET', $listingPath);
+        $listingBody = (string) $listingResponse->getBody();
+        $actions = [];
+
+        foreach (array_values(array_unique(array_map('intval', $skpdIds))) as $skpdId) {
+            $parentSkpdId = (int) ($this->puskesmasUnit($skpdId)['parent_skpd_id'] ?? $skpdId);
+            $parentAction = $this->extractSkpdLoginAction($listingBody, $parentSkpdId);
+            $parentAction['listing'] = [
+                'path' => $listingPath,
+                'status_code' => $listingResponse->getStatusCode(),
+                'redirect_history' => $this->redirectHistory($listingResponse),
+            ];
+
+            $actions[$skpdId] = $this->isPuskesmasVirtualSkpd($skpdId)
+                ? [
+                    'method' => $parentAction['method'],
+                    'url' => $parentAction['url'],
+                    'source' => 'puskesmas_parent',
+                    'parent_action' => $parentAction,
+                    'listing' => $parentAction['listing'],
+                ]
+                : $parentAction;
         }
 
         return $actions;
@@ -2490,6 +3401,78 @@ class AbsensiScraperService
             'url' => $this->skpdLoginPath($skpdId),
             'source' => 'fallback',
         ];
+    }
+
+    protected function extractPuskesmasLoginAction(string $html, array $unit): array
+    {
+        $crawler = $this->createCrawler($html, $this->baseUrl . self::ADMIN_PUSKESMAS_PATH);
+        $targetKode = strtolower($this->normalizeText((string) ($unit['kode'] ?? '')));
+        $targetNama = strtolower($this->normalizeText((string) ($unit['nama'] ?? '')));
+        $matchedRow = null;
+
+        $crawler->filter('table tbody tr')->each(function (Crawler $row) use (&$matchedRow, $targetKode, $targetNama) {
+            if ($matchedRow !== null || $row->filter('td')->count() === 0) {
+                return;
+            }
+
+            $cells = [];
+            $row->filter('td')->each(function (Crawler $cell) use (&$cells) {
+                $cells[] = strtolower($this->normalizeText($cell->text('')));
+            });
+
+            $kode = $cells[1] ?? '';
+            $nama = $cells[2] ?? '';
+
+            if (($targetKode !== '' && $kode === $targetKode)
+                || ($targetNama !== '' && str_contains($nama, $targetNama))) {
+                $matchedRow = $row;
+            }
+        });
+
+        if (! $matchedRow instanceof Crawler) {
+            throw new \RuntimeException('Baris puskesmas ' . ($unit['nama'] ?? '-') . ' tidak ditemukan.');
+        }
+
+        $form = $this->findSkpdActionForm($matchedRow, 'masuk');
+        if ($form->count() > 0) {
+            $method = strtoupper(trim((string) $form->attr('method')) ?: 'GET');
+            $action = trim((string) $form->attr('action'));
+            $formParams = [];
+
+            $form->filter('input[name]')->each(function (Crawler $input) use (&$formParams) {
+                $name = trim((string) $input->attr('name'));
+                if ($name !== '') {
+                    $formParams[$name] = (string) $input->attr('value');
+                }
+            });
+
+            return [
+                'method' => $method === 'POST' ? 'POST' : 'GET',
+                'url' => $action !== '' ? $action : self::ADMIN_PUSKESMAS_PATH,
+                'form_params' => $formParams,
+                'source' => 'puskesmas_form',
+            ];
+        }
+
+        $loginLink = $matchedRow->filter('a[href]')->reduce(function (Crawler $link) {
+            $text = strtolower($this->normalizeText($link->text('')));
+            $href = strtolower(trim((string) $link->attr('href')));
+
+            return str_contains($text, 'masuk')
+                || str_contains($href, 'masuk')
+                || str_contains($href, 'login')
+                || str_contains($href, 'puskesmas');
+        })->last();
+
+        if ($loginLink->count() > 0) {
+            return [
+                'method' => 'GET',
+                'url' => (string) $loginLink->attr('href'),
+                'source' => 'puskesmas_link',
+            ];
+        }
+
+        throw new \RuntimeException('Tombol Masuk puskesmas ' . ($unit['nama'] ?? '-') . ' tidak ditemukan.');
     }
 
     protected function findSkpdActionForm(Crawler $row, string $actionText): Crawler

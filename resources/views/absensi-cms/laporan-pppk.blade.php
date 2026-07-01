@@ -75,7 +75,7 @@
                 <div class="mx-auto flex max-w-[1800px] items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
                     <div>
                         <h1 class="text-xl font-semibold tracking-tight">Laporan Absensi PPPK dan Data PPPK</h1>
-                        <p class="mt-1 text-sm text-zinc-500">Data dari menu PPPK portal Absensi.</p>
+                        <p class="mt-1 text-sm text-zinc-500">Data dari menu PPPK dan Pegawai SKPD portal Absensi.</p>
                     </div>
                     <a href="{{ route('dashboard') }}" class="hidden items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 hover:bg-white sm:flex">
                         <i data-lucide="arrow-left" class="h-4 w-4"></i>
@@ -151,7 +151,7 @@
                         @if (is_array($result))
                             <div class="mt-4 rounded-md border {{ ($result['success'] ?? false) ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800' }} px-3 py-2 text-sm">
                                 <div class="font-medium">Tersimpan {{ number_format($result['summary']['stored_report_rows'] ?? 0) }} baris absensi.</div>
-                                <div class="mt-1 text-xs">Data PPPK {{ number_format($result['summary']['stored_pppk_rows'] ?? 0) }} baris. Berhasil {{ $result['summary']['success_count'] ?? 0 }} SKPD, gagal {{ $result['summary']['failed_count'] ?? 0 }} SKPD.</div>
+                                <div class="mt-1 text-xs">Data PPPK {{ number_format($result['summary']['stored_pppk_rows'] ?? 0) }} baris, termasuk PPPK Paruh Waktu {{ number_format($result['summary']['stored_pppk_paruh_waktu_rows'] ?? 0) }} baris. Berhasil {{ $result['summary']['success_count'] ?? 0 }} SKPD, gagal {{ $result['summary']['failed_count'] ?? 0 }} SKPD.</div>
                             </div>
                         @endif
 
@@ -177,10 +177,16 @@
                             </div>
                         </div>
 
-                        <button type="submit" class="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800">
-                            <i data-lucide="download-cloud" class="h-4 w-4"></i>
-                            Ambil & Simpan
-                        </button>
+                        <div class="mt-5 grid gap-2">
+                            <button type="submit" name="scope" value="range" class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800">
+                                <i data-lucide="download-cloud" class="h-4 w-4"></i>
+                                Ambil Rentang SKPD
+                            </button>
+                            <button type="submit" name="scope" value="all" class="inline-flex w-full items-center justify-center gap-2 rounded-md border border-cyan-200 bg-cyan-50 px-4 py-2.5 text-sm font-semibold text-cyan-800 hover:bg-cyan-100">
+                                <i data-lucide="building-2" class="h-4 w-4"></i>
+                                Ambil Semua SKPD
+                            </button>
+                        </div>
                     </form>
 
                     <div class="min-w-0 space-y-4">

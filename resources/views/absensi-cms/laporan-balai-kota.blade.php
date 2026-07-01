@@ -356,7 +356,7 @@
                     </div>
 
                     <p class="mt-3 text-[11px] leading-relaxed text-zinc-700">
-                        Catatan: Status hadir dihitung dari Apel Harian atau Apel Hari Besar. PPPK Paruh Waktu ditampilkan sebagai data informasi kepegawaian, tetapi belum dimasukkan dalam perhitungan kehadiran, tidak hadir, tanpa keterangan, maupun persentase karena belum menggunakan mekanisme absensi apel.
+                        Catatan: Status hadir dihitung dari Apel Harian atau Apel Hari Besar. PPPK Paruh Waktu sudah wajib absensi dan dimasukkan dalam perhitungan kehadiran, tidak hadir, tanpa keterangan, serta persentase.
                     </p>
                 </div>
 
@@ -377,7 +377,7 @@
                                     role="tab">
                                     <span class="block max-w-56 truncate">{{ $unit['label'] }}</span>
                                     <span class="mt-1 block text-[11px] opacity-75">
-                                        {{ $unit['summary']['hadir'] }} hadir · {{ $unit['summary']['tugas_cuti'] }} cuti/TL · {{ $unit['summary']['tanpa_keterangan'] }} TK · {{ $unit['summary']['belum_wajib_absen'] ?? 0 }} belum wajib
+                                        {{ $unit['summary']['hadir'] }} hadir · {{ $unit['summary']['tugas_cuti'] }} cuti/TL · {{ $unit['summary']['tanpa_keterangan'] }} TK
                                     </span>
                                 </button>
                             @endforeach
@@ -446,8 +446,6 @@
                                                         <span class="inline-flex rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">Hadir</span>
                                                     @elseif ($detail['status'] === 'Tugas/Cuti')
                                                         <span class="inline-flex rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">Tugas/Cuti</span>
-                                                    @elseif ($detail['status'] === 'Belum Wajib Absen')
-                                                        <span class="inline-flex rounded-md bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-700">Belum Wajib Absen</span>
                                                     @else
                                                         <span class="inline-flex rounded-md bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700">Tanpa Keterangan</span>
                                                     @endif

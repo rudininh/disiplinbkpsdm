@@ -254,4 +254,154 @@ class AbsensiScraperServiceTest extends TestCase
         $this->assertSame('196905222022212001', $parsed['rows'][0]['nip']);
         $this->assertSame('JAHRAH', $parsed['rows'][0]['nama']);
     }
+
+    public function test_parse_admin_pegawai_reads_pppk_paruh_waktu_rows(): void
+    {
+        $service = new class extends AbsensiScraperService {
+            public function exposeParseAdminPegawaiPppkParuhWaktuHtml(string $html, int $skpdId): array
+            {
+                return $this->parseAdminPegawaiPppkParuhWaktuHtml($html, $skpdId);
+            }
+        };
+
+        $html = <<<'HTML'
+            <table>
+                <tbody>
+                    <tr>
+                        <td>61</td>
+                        <td>MUHAMMAD THOYIB, S.P.<br>197110262025211024<br>PENATA LAYANAN OPERASIONAL</td>
+                        <td></td>
+                        <td>01-07-2026</td>
+                        <td>5 Hari Kerja <a href="/admin/pegawai/61/presensi">Presensi</a></td>
+                        <td><a href="/admin/pegawai/61/edit">Edit</a></td>
+                        <td>PPPK PARUH WAKTU</td>
+                    </tr>
+                    <tr>
+                        <td>69</td>
+                        <td>Drs. ZAINAL HAKIM<br>196411071992031012</td>
+                        <td>Pembina Tingkat 1<br>IV/B</td>
+                        <td>07-11-1964</td>
+                        <td>5 Hari Kerja</td>
+                        <td>STATUS : PENSIUN</td>
+                        <td>PNS</td>
+                    </tr>
+                </tbody>
+            </table>
+        HTML;
+
+        $parsed = $service->exposeParseAdminPegawaiPppkParuhWaktuHtml($html, 6);
+
+        $this->assertSame(1, $parsed['row_count']);
+        $this->assertSame('197110262025211024', $parsed['rows'][0]['nip']);
+        $this->assertSame('MUHAMMAD THOYIB, S.P.', $parsed['rows'][0]['nama']);
+        $this->assertSame('PENATA LAYANAN OPERASIONAL', $parsed['rows'][0]['jabatan']);
+        $this->assertSame('PPPK PARUH WAKTU', $parsed['rows'][0]['status_asn']);
+        $this->assertSame('pegawai:61', $parsed['rows'][0]['pppk_id']);
+        $this->assertSame('/admin/pegawai/61/presensi', $parsed['rows'][0]['presensi_url']);
+    }
+
+    public function test_parse_admin_pegawai_reads_pns_and_pppk_rows(): void
+    {
+        $service = new class extends AbsensiScraperService {
+            public function exposeParseAdminPegawaiHtml(string $html, int $skpdId): array
+            {
+                return $this->parseAdminPegawaiHtml($html, $skpdId);
+            }
+        };
+
+        $html = <<<'HTML'
+            <table>
+                <tbody>
+                    <tr>
+                        <td>1</td>
+                        <td>ASN PNS<br>198001012006041001<br>PERAWAT AHLI MUDA</td>
+                        <td>Penata<br>III/C</td>
+                        <td>01-01-1980</td>
+                        <td>Shift <a href="/admin/pegawai/100/presensi">Presensi</a></td>
+                        <td><a href="/admin/pegawai/100/edit">Edit</a></td>
+                        <td>PNS</td>
+                    </tr>
+                    <tr>
+                        <td>2</td>
+                        <td>ASN PPPK<br>199001012025212001<br>PENATA LAYANAN OPERASIONAL</td>
+                        <td></td>
+                        <td>01-01-1990</td>
+                        <td>5 Hari Kerja <a href="/admin/pegawai/101/presensi">Presensi</a></td>
+                        <td><a href="/admin/pegawai/101/edit">Edit</a></td>
+                        <td>PPPK PARUH WAKTU</td>
+                    </tr>
+                    <tr>
+                        <td>3</td>
+                        <td>ASN PENSIUN<br>196001012000041001<br>DOKTER</td>
+                        <td>Pembina</td>
+                        <td>01-01-1960</td>
+                        <td>5 Hari Kerja</td>
+                        <td>STATUS : PENSIUN</td>
+                        <td>PNS</td>
+                    </tr>
+                </tbody>
+            </table>
+        HTML;
+
+        $parsed = $service->exposeParseAdminPegawaiHtml($html, 3208);
+
+        $this->assertSame(2, $parsed['row_count']);
+        $this->assertSame('198001012006041001', $parsed['rows'][0]['nip']);
+        $this->assertSame('PNS', $parsed['rows'][0]['status_asn']);
+        $this->assertSame('199001012025212001', $parsed['rows'][1]['nip']);
+        $this->assertSame('PPPK PARUH WAKTU', $parsed['rows'][1]['status_asn']);
+    }
+
+    public function test_pppk_presensi_path_uses_admin_pegawai_for_paruh_waktu(): void
+    {
+        $service = new class extends AbsensiScraperService {
+            public function exposePppkPresensiPath(array $person, string $month, string $year): ?string
+            {
+                return $this->pppkPresensiPath($person, $month, $year);
+            }
+        };
+
+        $path = $service->exposePppkPresensiPath([
+            'pppk_id' => 'pegawai:61',
+            'presensi_url' => '/admin/pegawai/61/presensi',
+        ], '7', '2026');
+
+        $this->assertSame('/admin/pegawai/61/presensi/07/2026', $path);
+    }
+
+    public function test_extract_puskesmas_login_action_finds_masuk_link(): void
+    {
+        $service = new class extends AbsensiScraperService {
+            public function exposeExtractPuskesmasLoginAction(string $html, array $unit): array
+            {
+                return $this->extractPuskesmasLoginAction($html, $unit);
+            }
+        };
+
+        $html = <<<'HTML'
+            <table>
+                <tbody>
+                    <tr>
+                        <td>3</td>
+                        <td>1.02.01.8</td>
+                        <td>Rumah Sakit Sultan Suriansyah</td>
+                        <td>
+                            <a href="/admin/puskesmas/3/reset">Reset Pass</a>
+                            <a href="/admin/puskesmas/3/password">Ganti Pass</a>
+                            <a href="/admin/puskesmas/3/masuk">Masuk</a>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        HTML;
+
+        $action = $service->exposeExtractPuskesmasLoginAction($html, [
+            'kode' => '1.02.01.8',
+            'nama' => 'Rumah Sakit Sultan Suriansyah',
+        ]);
+
+        $this->assertSame('GET', $action['method']);
+        $this->assertSame('/admin/puskesmas/3/masuk', $action['url']);
+        $this->assertSame('puskesmas_link', $action['source']);
+    }
 }

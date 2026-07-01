@@ -43,8 +43,6 @@ return [
             13 => ['kode' => '2.10.01.', 'nama' => 'Dinas Komunikasi, Informatika dan Statistik'],
             14 => ['kode' => '2.11.01.', 'nama' => 'Dinas Koperasi, Usaha Mikro dan Tenaga Kerja'],
             15 => ['kode' => '2.12.01.', 'nama' => 'Dinas Penanaman Modal dan Pelayanan Terpadu Satu Pintu'],
-            16 => ['kode' => '2.13.01.', 'nama' => 'Dinas Kepemudaan dan Olahraga'],
-            17 => ['kode' => '2.16.01.', 'nama' => 'Dinas Kebudayaan dan Pariwisata'],
             18 => ['kode' => '2.17.01.', 'nama' => 'Dinas Perpustakaan dan Arsip'],
             19 => ['kode' => '3.04.01.', 'nama' => 'Dinas Perdagangan dan Perindustrian'],
             20 => ['kode' => '4.01.03.', 'nama' => 'Sekretariat Daerah'],
@@ -60,9 +58,16 @@ return [
             30 => ['kode' => '4.01.13.', 'nama' => 'Kecamatan Banjarmasin Selatan'],
             31 => ['kode' => '4.02.01.', 'nama' => 'Badan Perencanaan, Penelitian dan Pengembangan Daerah'],
             32 => ['kode' => '1.02.01.', 'nama' => 'Dinas Kesehatan'],
-            33 => ['kode' => '11111', 'nama' => 'Dinas Baru'],
             34 => ['kode' => '1.05.01.', 'nama' => 'Dinas Pemadam Kebakaran dan Penyelamatan Kota Banjarmasin'],
             35 => ['kode' => '2.22.3.', 'nama' => 'Dinas Kebudayaan, Kepemudaan, Olahraga dan Pariwisata Kota Banjarmasin'],
+            3208 => ['kode' => '1.02.01.8', 'nama' => 'Rumah Sakit Sultan Suriansyah'],
+        ],
+        'puskesmas_units' => [
+            3208 => [
+                'parent_skpd_id' => 32,
+                'kode' => '1.02.01.8',
+                'nama' => 'Rumah Sakit Sultan Suriansyah',
+            ],
         ],
     ],
 
