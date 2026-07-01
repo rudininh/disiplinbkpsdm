@@ -4,6 +4,7 @@ use App\Http\Controllers\AbsensiCmsController;
 use App\Http\Controllers\AbsensiScraperController;
 use App\Http\Controllers\DisiplinScraperController;
 use App\Http\Controllers\SiasnProfileController;
+use App\Http\Controllers\SuperHukdisController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', [AbsensiCmsController::class, 'index'])->name('dashboard');
@@ -44,6 +45,8 @@ Route::prefix('cms')->name('cms.')->group(function () {
     Route::post('/laporan-apel-skpd/fetch', [AbsensiCmsController::class, 'fetchLaporanApelSkpd'])->name('laporan-apel-skpd.fetch');
     Route::post('/laporan-apel-skpd/fetch-hari-besar', [AbsensiCmsController::class, 'fetchLaporanApelSkpdHariBesar'])->name('laporan-apel-skpd.fetch-hari-besar');
     Route::post('/laporan-apel-skpd/fetch-cuti', [AbsensiCmsController::class, 'fetchLaporanApelSkpdCuti'])->name('laporan-apel-skpd.fetch-cuti');
+    Route::get('/super-hukdis', [SuperHukdisController::class, 'index'])->name('super-hukdis.index');
+    Route::post('/super-hukdis/generate', [SuperHukdisController::class, 'generate'])->name('super-hukdis.generate');
 });
 
 Route::prefix('absensi-scraper')->name('absensi-scraper.')->group(function () {

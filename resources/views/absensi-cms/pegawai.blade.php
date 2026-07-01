@@ -67,6 +67,10 @@
                     <i data-lucide="users" class="h-4 w-4"></i>
                     ASN
                 </a>
+                <a href="{{ route('cms.super-hukdis.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="file-badge" class="h-4 w-4"></i>
+                    Super Hukdis
+                </a>
                 <a href="{{ route('absensi-scraper.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="braces" class="h-4 w-4"></i>
                     API Scraper
