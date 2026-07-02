@@ -115,39 +115,63 @@
             <section class="w-full px-4 py-6 sm:px-6 lg:px-8">
                 <div class="grid items-start gap-5 xl:grid-cols-[minmax(320px,0.8fr)_minmax(420px,1fr)]">
                     <div class="space-y-4">
-                <div class="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+                <div class="rounded-lg border-2 border-cyan-200 bg-gradient-to-br from-cyan-50 to-white p-5 shadow-sm">
                     <div class="flex items-center gap-2">
-                        <i data-lucide="route" class="h-5 w-5 text-cyan-700"></i>
-                        <h2 class="text-sm font-semibold">Alur Login</h2>
+                        <i data-lucide="zap" class="h-5 w-5 text-cyan-700"></i>
+                        <h2 class="text-sm font-semibold">Ambil Token Otomatis <span class="rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-700">Tanpa Extension</span></h2>
                     </div>
 
-                    <div class="mt-5 space-y-4 text-sm text-zinc-600">
+                    <div class="mt-4 space-y-3 text-sm text-zinc-600">
                         <div class="flex gap-3">
-                            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-cyan-700 text-xs font-semibold text-white">A</div>
+                            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cyan-700 text-xs font-semibold text-white">1</div>
+                            <p>Klik tombol <span class="font-semibold text-cyan-700">"🔑 Login SIASN & Ambil Token"</span> di bawah → popup ke ASN Digital terbuka.</p>
+                        </div>
+                        <div class="flex gap-3">
+                            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cyan-700 text-xs font-semibold text-white">2</div>
+                            <p>Login SSO di popup sampai masuk ke dashboard ASN Digital / SIASN Instansi.</p>
+                        </div>
+                        <div class="flex gap-3">
+                            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cyan-700 text-xs font-semibold text-white">3</div>
                             <div>
-                                <p class="font-semibold text-zinc-800">Cara Otomatis (Popup)</p>
-                                <p class="mt-1">Klik tombol <span class="font-semibold text-cyan-700">"Popup Login Auto-Token"</span> di samping textarea. Login di popup yang muncul → token otomatis terisi. Syarat: pasang userscript <span class="font-mono text-xs text-zinc-800">SIASN Token Bridge</span> di Tampermonkey.</p>
+                                <p>Setelah login berhasil, tekan <kbd class="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 text-xs font-semibold text-zinc-700">F12</kbd> di popup, buka tab <strong>Console</strong>, paste kode di bawah, lalu tekan Enter:</p>
+                                <div class="group relative mt-2 rounded-md border border-cyan-200 bg-white p-2">
+                                    <pre id="console-snippet" class="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5 text-cyan-900 select-all">opener.postMessage({type:'SIASN_TOKEN',token:document.cookie.split(';').map(c=>c.trim().split('=')).filter(([k,v])=>v&&v.startsWith('eyJ')).map(([k,v])=>v)[0]||[localStorage,sessionStorage].flatMap(s=>{try{let t=[];for(let i=0;i<s.length;i++){let v=s.getItem(s.key(i));if(v&&v.startsWith('eyJ')&&v.split('.').length===3)t.push(v);try{let o=JSON.parse(v);for(let k of['access_token','token','accessToken'])if(o[k]&&o[k].startsWith('eyJ'))t.push(o[k])}catch{}}return t}catch{return[]}})[0]||prompt('Token tidak terdeteksi otomatis. Paste access_token manual:')},'*');close()</pre>
+                                    <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('console-snippet').textContent);this.textContent='✓ Copied!';setTimeout(()=>this.textContent='Copy',1500)" class="absolute right-2 top-2 rounded border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold text-cyan-700 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-cyan-100">Copy</button>
+                                </div>
                             </div>
                         </div>
-                        <div class="relative flex items-center">
-                            <div class="flex-grow border-t border-zinc-200"></div>
-                            <span class="mx-3 flex-shrink text-xs text-zinc-400">atau manual</span>
-                            <div class="flex-grow border-t border-zinc-200"></div>
-                        </div>
                         <div class="flex gap-3">
-                            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white">1</div>
-                            <p>Buka ASN Digital, lalu masuk melalui halaman SSO SIASN sampai berhasil kembali ke portal.</p>
-                        </div>
-                        <div class="flex gap-3">
-                            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white">2</div>
-                            <p>Ambil <span class="font-mono text-xs text-zinc-800">access_token</span>, header <span class="font-mono text-xs text-zinc-800">Authorization: Bearer</span>, atau cookie <span class="font-mono text-xs text-zinc-800">token</span> dari browser setelah login.</p>
-                        </div>
-                        <div class="flex gap-3">
-                            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white">3</div>
-                            <p>Tempel token panjang yang diawali <span class="font-mono text-xs text-zinc-800">eyJ...</span>. Kosongkan NIP untuk cek token lokal; isi NIP untuk lanjut cek API profil SIASN.</p>
+                            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-xs font-semibold text-white">✓</div>
+                            <p>Popup otomatis tertutup & token langsung terisi di bawah. Tinggal klik <strong>"Tes Login SIASN"</strong>.</p>
                         </div>
                     </div>
+
+                    <div class="mt-4 flex flex-wrap gap-2">
+                        <button type="button" id="btn-popup-siasn" class="inline-flex items-center gap-2 rounded-md bg-cyan-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-cyan-800 transition-colors">
+                            <i data-lucide="external-link" class="h-4 w-4"></i>
+                            🔑 Login SIASN & Ambil Token
+                        </button>
+                        <a href="https://asndigital.bkn.go.id/" target="_blank" class="inline-flex items-center gap-2 rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
+                            <i data-lucide="external-link" class="h-4 w-4"></i>
+                            Buka ASN Digital (Tab Baru)
+                        </a>
+                    </div>
                 </div>
+
+                <details class="rounded-lg border border-zinc-200 bg-white shadow-sm">
+                    <summary class="cursor-pointer px-5 py-4 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 flex items-center gap-2">
+                        <i data-lucide="bookmark" class="h-4 w-4 text-amber-600"></i>
+                        Bonus: Drag Bookmarklet ke Bookmark Bar (1-klik permanen)
+                    </summary>
+                    <div class="border-t border-zinc-100 px-5 py-4 text-sm text-zinc-600">
+                        <p class="mb-3">Drag link di bawah ke <strong>Bookmark Bar</strong> browser Anda. Setelah itu, setiap kali sudah login di SIASN/ASN Digital, cukup klik bookmark tersebut → token langsung terkirim tanpa buka Console.</p>
+                        {{-- The bookmarklet href is intentionally a javascript: URI --}}
+                        <a href="javascript:void(opener?opener.postMessage({type:'SIASN_TOKEN',token:document.cookie.split(';').map(function(c){return c.trim().split('=')}).filter(function(a){return a[1]&&a[1].startsWith('eyJ')}).map(function(a){return a[1]})[0]||[localStorage,sessionStorage].flatMap(function(s){try{var t=[];for(var i=0;i<s.length;i++){var v=s.getItem(s.key(i));if(v&&v.startsWith('eyJ')&&v.split('.').length===3)t.push(v);try{var o=JSON.parse(v);if(o.access_token&&o.access_token.startsWith('eyJ'))t.push(o.access_token);if(o.token&&o.token.startsWith('eyJ'))t.push(o.token)}catch(e){}}return t}catch(e){return[]}})[0]||prompt('Paste token manual:')},'*')&&close():alert('Buka halaman ini dari popup Login SIASN di aplikasi Disiplin BKPSDM.'))" class="inline-flex items-center gap-2 rounded-md border-2 border-dashed border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-bold text-amber-800 hover:bg-amber-100 cursor-grab active:cursor-grabbing" draggable="true" onclick="event.preventDefault();alert('Drag link ini ke Bookmark Bar, jangan diklik langsung di sini.')">
+                            📌 Kirim Token SIASN
+                        </a>
+                        <p class="mt-2 text-xs text-zinc-400">Bookmarklet ini hanya bekerja jika halaman SIASN dibuka lewat tombol popup di atas.</p>
+                    </div>
+                </details>
 
                 <div class="rounded-lg border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
                     <div class="flex items-start gap-3">
@@ -249,14 +273,9 @@
                     </div>
 
                     <div>
-                        <div class="flex items-center justify-between mb-1">
-                            <label class="block text-sm font-medium text-zinc-700" for="login_bearer_token">Access Token SIASN</label>
-                            <button type="button" id="btn-popup-siasn" class="inline-flex items-center gap-1.5 rounded bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700 border border-cyan-200 hover:bg-cyan-100 transition-colors">
-                                <i data-lucide="external-link" class="h-3.5 w-3.5"></i>
-                                Popup Login Auto-Token
-                            </button>
-                        </div>
-                        <textarea id="login_bearer_token" name="bearer_token" rows="9" class="mt-1 w-full resize-y rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100" placeholder="Bearer eyJ..., langsung eyJ..., atau blok cookie yang memuat token=eyJ...">{{ old('bearer_token', $storedToken['token'] ?? '') }}</textarea>
+                        <label class="block text-sm font-medium text-zinc-700" for="login_bearer_token">Access Token SIASN</label>
+                        <textarea id="login_bearer_token" name="bearer_token" rows="5" class="mt-1 w-full resize-y rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100" placeholder="Token terisi otomatis dari popup, atau paste manual: Bearer eyJ..., langsung eyJ..., atau blok cookie yang memuat token=eyJ...">{{ old('bearer_token', $storedToken['token'] ?? '') }}</textarea>
+                        <p class="mt-1 text-xs text-zinc-400">Gunakan cara otomatis di atas agar tidak perlu paste manual.</p>
                     </div>
 
                     <button type="submit" class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-cyan-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-800">
@@ -637,11 +656,17 @@
                 setTimeout(hideStatus, 10000);
             }
 
-            // Listen for postMessage from the popup (sent by the userscript bridge)
+            // Listen for postMessage from the popup (console snippet or bookmarklet)
             window.addEventListener('message', function (event) {
                 if (!event.data || event.data.type !== 'SIASN_TOKEN') return;
-                const token = event.data.token || '';
-                if (isValidAccessToken(token)) {
+                const token = (event.data.token || '').trim();
+                if (!token) return;
+
+                // Accept any token that looks like a JWT (even if we can't fully validate)
+                if (isJwtToken(token)) {
+                    receiveToken(token);
+                } else if (token.length > 40) {
+                    // Accept long strings that might be a valid token in an unexpected format
                     receiveToken(token);
                 }
             });
@@ -668,7 +693,7 @@
                 showStatus(
                     'loading',
                     'Menunggu Login SIASN...',
-                    'Popup window terbuka. Silakan login di ASN Digital / SIASN. Token akan otomatis terkirim setelah login berhasil. Pastikan userscript "SIASN Token Bridge" sudah terpasang di Tampermonkey.'
+                    'Popup window terbuka. Selesaikan login, lalu tekan F12 di popup, paste kode dari langkah 3 di tab Console, dan tekan Enter.'
                 );
 
                 // Poll to detect popup closed without token
@@ -684,7 +709,7 @@
                                 showStatus(
                                     'error',
                                     'Popup Ditutup',
-                                    'Popup ditutup sebelum token diterima. Pastikan userscript "SIASN Token Bridge" terpasang di Tampermonkey, lalu coba lagi.'
+                                    'Popup ditutup sebelum token diterima. Coba ulangi dan pastikan menjalankan kode di Console (F12) atau menggunakan Bookmarklet.'
                                 );
                                 setTimeout(hideStatus, 8000);
                             }
