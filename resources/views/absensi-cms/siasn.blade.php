@@ -123,6 +123,18 @@
 
                     <div class="mt-5 space-y-4 text-sm text-zinc-600">
                         <div class="flex gap-3">
+                            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-cyan-700 text-xs font-semibold text-white">A</div>
+                            <div>
+                                <p class="font-semibold text-zinc-800">Cara Otomatis (Popup)</p>
+                                <p class="mt-1">Klik tombol <span class="font-semibold text-cyan-700">"Popup Login Auto-Token"</span> di samping textarea. Login di popup yang muncul → token otomatis terisi. Syarat: pasang userscript <span class="font-mono text-xs text-zinc-800">SIASN Token Bridge</span> di Tampermonkey.</p>
+                            </div>
+                        </div>
+                        <div class="relative flex items-center">
+                            <div class="flex-grow border-t border-zinc-200"></div>
+                            <span class="mx-3 flex-shrink text-xs text-zinc-400">atau manual</span>
+                            <div class="flex-grow border-t border-zinc-200"></div>
+                        </div>
+                        <div class="flex gap-3">
                             <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white">1</div>
                             <p>Buka ASN Digital, lalu masuk melalui halaman SSO SIASN sampai berhasil kembali ke portal.</p>
                         </div>
@@ -237,7 +249,13 @@
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-zinc-700" for="login_bearer_token">Access Token SIASN</label>
+                        <div class="flex items-center justify-between mb-1">
+                            <label class="block text-sm font-medium text-zinc-700" for="login_bearer_token">Access Token SIASN</label>
+                            <button type="button" id="btn-popup-siasn" class="inline-flex items-center gap-1.5 rounded bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700 border border-cyan-200 hover:bg-cyan-100 transition-colors">
+                                <i data-lucide="external-link" class="h-3.5 w-3.5"></i>
+                                Popup Login Auto-Token
+                            </button>
+                        </div>
                         <textarea id="login_bearer_token" name="bearer_token" rows="9" class="mt-1 w-full resize-y rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100" placeholder="Bearer eyJ..., langsung eyJ..., atau blok cookie yang memuat token=eyJ...">{{ old('bearer_token', $storedToken['token'] ?? '') }}</textarea>
                     </div>
 
@@ -471,6 +489,25 @@
         </main>
     </div>
 
+    {{-- Popup login status indicator --}}
+    <div id="popup-login-status" class="hidden fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border bg-white p-4 shadow-xl transition-all">
+        <div class="flex items-start gap-3">
+            <div id="popup-login-icon" class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-100 text-cyan-700">
+                <i data-lucide="loader-2" class="h-4 w-4 animate-spin"></i>
+            </div>
+            <div class="min-w-0 flex-1">
+                <div id="popup-login-title" class="text-sm font-semibold text-zinc-900">Menunggu Login SIASN...</div>
+                <div id="popup-login-desc" class="mt-1 text-xs text-zinc-500">Popup window sedang terbuka. Login di ASN Digital/SIASN Instansi, token akan otomatis terkirim.</div>
+            </div>
+            <button id="popup-login-close" class="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600">
+                <i data-lucide="x" class="h-4 w-4"></i>
+            </button>
+        </div>
+        <div id="popup-login-progress" class="mt-3 h-1.5 overflow-hidden rounded-full bg-zinc-100">
+            <div class="h-full animate-pulse rounded-full bg-cyan-500" style="width: 100%"></div>
+        </div>
+    </div>
+
     <script>
         lucide.createIcons();
 
@@ -490,6 +527,184 @@
                 row.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
             });
         });
+
+        // ─────────────────────────────────────────────────
+        // Popup Login SIASN — Auto Token Capture
+        // ─────────────────────────────────────────────────
+        (function () {
+            const SIASN_LOGIN_URLS = [
+                'https://asndigital.bkn.go.id/',
+                'https://siasn-instansi.bkn.go.id/',
+            ];
+            const POPUP_WIDTH = 1000;
+            const POPUP_HEIGHT = 700;
+
+            const statusBox = document.getElementById('popup-login-status');
+            const statusIcon = document.getElementById('popup-login-icon');
+            const statusTitle = document.getElementById('popup-login-title');
+            const statusDesc = document.getElementById('popup-login-desc');
+            const statusProgress = document.getElementById('popup-login-progress');
+            const tokenTextarea = document.getElementById('login_bearer_token');
+            const popupBtn = document.getElementById('btn-popup-siasn');
+            const closeBtn = document.getElementById('popup-login-close');
+
+            let popupWindow = null;
+            let pollTimer = null;
+
+            function showStatus(type, title, desc) {
+                statusBox.classList.remove('hidden');
+                statusTitle.textContent = title;
+                statusDesc.textContent = desc;
+
+                const iconMap = {
+                    loading: '<i data-lucide="loader-2" class="h-4 w-4 animate-spin"></i>',
+                    success: '<i data-lucide="check-circle-2" class="h-4 w-4"></i>',
+                    error: '<i data-lucide="alert-circle" class="h-4 w-4"></i>',
+                };
+                const colorMap = {
+                    loading: 'bg-cyan-100 text-cyan-700',
+                    success: 'bg-emerald-100 text-emerald-700',
+                    error: 'bg-rose-100 text-rose-700',
+                };
+
+                statusIcon.innerHTML = iconMap[type] || iconMap.loading;
+                statusIcon.className = 'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ' + (colorMap[type] || colorMap.loading);
+                statusProgress.style.display = type === 'loading' ? 'block' : 'none';
+
+                lucide.createIcons({ nodes: [statusIcon] });
+            }
+
+            function hideStatus() {
+                statusBox.classList.add('hidden');
+            }
+
+            function isJwtToken(str) {
+                return typeof str === 'string' && str.startsWith('eyJ') && str.split('.').length === 3 && str.length > 50;
+            }
+
+            function jwtPayload(token) {
+                try {
+                    const parts = token.split('.');
+                    if (parts.length < 2) return null;
+                    let payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+                    payload += '='.repeat((4 - payload.length % 4) % 4);
+                    return JSON.parse(atob(payload));
+                } catch { return null; }
+            }
+
+            function isValidAccessToken(token) {
+                if (!isJwtToken(token)) return false;
+                const payload = jwtPayload(token);
+                if (!payload) return false;
+                // Reject refresh tokens
+                if ((payload.typ || '').toLowerCase() === 'refresh') return false;
+                // Reject expired tokens
+                if (payload.exp && payload.exp * 1000 <= Date.now()) return false;
+                return true;
+            }
+
+            function receiveToken(token) {
+                // Stop polling
+                if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+
+                // Fill the textarea
+                tokenTextarea.value = token;
+                tokenTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+                // Extract identity
+                const payload = jwtPayload(token);
+                const nama = payload?.pegawai?.nama || payload?.nama || '';
+                const exp = payload?.exp ? new Date(payload.exp * 1000).toLocaleString('id-ID') : 'tidak diketahui';
+
+                showStatus(
+                    'success',
+                    '✅ Token SIASN Berhasil Didapat!',
+                    `Token ${nama ? 'untuk ' + nama + ' ' : ''}terisi otomatis. Berlaku sampai ${exp}. Klik "Tes Login SIASN" untuk memverifikasi.`
+                );
+
+                // Highlight textarea briefly
+                tokenTextarea.style.borderColor = '#059669';
+                tokenTextarea.style.backgroundColor = '#ecfdf5';
+                setTimeout(() => {
+                    tokenTextarea.style.borderColor = '';
+                    tokenTextarea.style.backgroundColor = '';
+                }, 3000);
+
+                // Close popup if still open
+                try { if (popupWindow && !popupWindow.closed) popupWindow.close(); } catch {}
+
+                // Auto hide status after 10s
+                setTimeout(hideStatus, 10000);
+            }
+
+            // Listen for postMessage from the popup (sent by the userscript bridge)
+            window.addEventListener('message', function (event) {
+                if (!event.data || event.data.type !== 'SIASN_TOKEN') return;
+                const token = event.data.token || '';
+                if (isValidAccessToken(token)) {
+                    receiveToken(token);
+                }
+            });
+
+            // Open popup and start polling
+            popupBtn.addEventListener('click', function () {
+                const left = (screen.width - POPUP_WIDTH) / 2;
+                const top = (screen.height - POPUP_HEIGHT) / 2;
+
+                // Try asndigital first, or SIASN instansi
+                const loginUrl = SIASN_LOGIN_URLS[0];
+
+                popupWindow = window.open(
+                    loginUrl,
+                    'siasn_login_popup',
+                    `width=${POPUP_WIDTH},height=${POPUP_HEIGHT},top=${top},left=${left},scrollbars=yes,resizable=yes,toolbar=no,menubar=no,location=yes,status=yes`
+                );
+
+                if (!popupWindow || popupWindow.closed) {
+                    showStatus('error', 'Popup Diblokir', 'Browser memblokir popup. Izinkan popup untuk situs ini di setting browser, lalu coba lagi.');
+                    return;
+                }
+
+                showStatus(
+                    'loading',
+                    'Menunggu Login SIASN...',
+                    'Popup window terbuka. Silakan login di ASN Digital / SIASN. Token akan otomatis terkirim setelah login berhasil. Pastikan userscript "SIASN Token Bridge" sudah terpasang di Tampermonkey.'
+                );
+
+                // Poll to detect popup closed without token
+                if (pollTimer) clearInterval(pollTimer);
+                pollTimer = setInterval(function () {
+                    try {
+                        if (popupWindow && popupWindow.closed) {
+                            clearInterval(pollTimer);
+                            pollTimer = null;
+
+                            // Check if we already got the token
+                            if (!tokenTextarea.value || !isValidAccessToken(tokenTextarea.value)) {
+                                showStatus(
+                                    'error',
+                                    'Popup Ditutup',
+                                    'Popup ditutup sebelum token diterima. Pastikan userscript "SIASN Token Bridge" terpasang di Tampermonkey, lalu coba lagi.'
+                                );
+                                setTimeout(hideStatus, 8000);
+                            }
+                        }
+                    } catch {}
+                }, 1000);
+
+                // Timeout after 10 minutes
+                setTimeout(function () {
+                    if (pollTimer) {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        showStatus('error', 'Timeout', 'Tidak ada token diterima dalam 10 menit. Silakan coba lagi.');
+                        setTimeout(hideStatus, 8000);
+                    }
+                }, 600000);
+            });
+
+            closeBtn.addEventListener('click', hideStatus);
+        })();
     </script>
 </body>
 </html>
