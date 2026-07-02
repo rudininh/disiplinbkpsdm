@@ -1,4 +1,4 @@
-@php
+﻿@php
     $payload = $result['cuti'] ?? $latest['cuti'] ?? null;
     $meta = $latest['meta'] ?? null;
     $tables = is_array($payload['tables'] ?? null) ? $payload['tables'] : [];
@@ -77,6 +77,10 @@
                 <a href="{{ route('cms.laporan-apel-skpd.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="clipboard-check" class="h-4 w-4"></i>
                     Laporan Apel SKPD
+                </a>
+                <a href="{{ route('cms.analisa-anomali.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="alert-triangle" class="h-4 w-4"></i>
+                    Analisa Anomali
                 </a>
                 <a href="{{ route('cms.pegawai.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="users" class="h-4 w-4"></i>
@@ -268,3 +272,4 @@
     </script>
 </body>
 </html>
+

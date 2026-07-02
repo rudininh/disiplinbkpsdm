@@ -1,4 +1,4 @@
-@php
+﻿@php
     $pageMode = $pageMode ?? 'real';
     $isSiasnPage = $pageMode === 'siasn';
     $pageTitle = $pageTitle ?? ($isSiasnPage ? 'Peta Jabatan SIASN' : 'Peta Jabatan Real');
@@ -344,7 +344,7 @@
             ->lower()
             ->replaceMatches('/^\s*(hj?|drs?|dra|drg|drh?|dr|ir|prof|ns|apt)\.?\s*,\s*/u', ' ')
             ->replaceMatches('/\([^)]*\)/u', ' ')
-            ->replaceMatches('/^\s*[-–—]\s*/u', ' ')
+            ->replaceMatches('/^\s*[-â€“â€”]\s*/u', ' ')
             ->replaceMatches('/[,;].*$/u', ' ')
             ->replaceMatches('/\b(hj?|drs?|dra|drg|drh?|dr|ir|prof|ns|apt)\b\.?/u', ' ')
             ->replaceMatches('/\b(s\.?\s*(h|sos|stp|kom|pd|si|t|pi|ap|ip|kep|km|psi|farm|ak|ag|i\s*kom|i\s*pust|tr\s*keb)|m\.?\s*(si|kom|pd|hum|ap|ip|eng|kep|kes|h|t|a|ab)|a\.?\s*(md|ma)|am\.?\s*(kg|keb)|se|sh|skm|sstp?|sst|st|mt|mm|ma|mab|mpd|mmpd|amkg|amkeb|strkeb|skep|sag|sab|sp|sm|sip|ssos|skom|spd|spi|sap|spsi|sfarm|td|tra)\b\.?/u', ' ')
@@ -742,6 +742,10 @@
                 <a href="{{ route('cms.laporan-apel-skpd.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="clipboard-check" class="h-4 w-4"></i>
                     Laporan Apel SKPD
+                </a>
+                <a href="{{ route('cms.analisa-anomali.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="alert-triangle" class="h-4 w-4"></i>
+                    Analisa Anomali
                 </a>
                 <a href="{{ route('cms.pegawai.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="users" class="h-4 w-4"></i>
@@ -1219,3 +1223,4 @@
     </script>
 </body>
 </html>
+

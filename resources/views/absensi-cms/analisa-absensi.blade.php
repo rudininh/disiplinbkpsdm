@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="utf-8">
@@ -62,6 +62,10 @@
                 <a href="{{ route('cms.laporan-apel-skpd.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="clipboard-check" class="h-4 w-4"></i>
                     Laporan Apel SKPD
+                </a>
+                <a href="{{ route('cms.analisa-anomali.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="alert-triangle" class="h-4 w-4"></i>
+                    Analisa Anomali
                 </a>
                 <a href="{{ route('cms.pegawai.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="users" class="h-4 w-4"></i>
@@ -200,7 +204,7 @@
                     <div class="min-w-0 rounded-lg border border-zinc-200 bg-white shadow-sm">
                         <div class="border-b border-zinc-200 px-5 py-4">
                             <h2 class="text-base font-semibold">Rekap Anomali per SKPD</h2>
-                            <p class="mt-1 text-sm text-zinc-500">{{ \Carbon\Carbon::parse($dateStart)->locale('id')->translatedFormat('d F Y') }} s/d {{ \Carbon\Carbon::parse($dateEnd)->locale('id')->translatedFormat('d F Y') }} · {{ number_format($summary['hari_data']) }} hari kerja efektif</p>
+                            <p class="mt-1 text-sm text-zinc-500">{{ \Carbon\Carbon::parse($dateStart)->locale('id')->translatedFormat('d F Y') }} s/d {{ \Carbon\Carbon::parse($dateEnd)->locale('id')->translatedFormat('d F Y') }} Â· {{ number_format($summary['hari_data']) }} hari kerja efektif</p>
                             <p class="mt-1 text-xs text-zinc-400">Tanggal merah dan cuti bersama nasional otomatis dikecualikan. Weekend mengikuti jenis presensi masing-masing pegawai.</p>
                         </div>
                         <div class="overflow-x-auto">
@@ -302,3 +306,4 @@
     </script>
 </body>
 </html>
+

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="utf-8">
@@ -63,6 +63,10 @@
                     <i data-lucide="clipboard-check" class="h-4 w-4"></i>
                     Laporan Apel SKPD
                 </a>
+                <a href="{{ route('cms.analisa-anomali.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
+                    <i data-lucide="alert-triangle" class="h-4 w-4"></i>
+                    Analisa Anomali
+                </a>
                 <a href="{{ route('cms.pegawai.index') }}" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white">
                     <i data-lucide="users" class="h-4 w-4"></i>
                     ASN
@@ -118,7 +122,7 @@
                                 <h3 class="text-sm font-semibold text-amber-800">Token SIASN Belum Tersimpan</h3>
                                 <p class="mt-1 text-sm text-amber-700">
                                     Untuk generate surat, Anda harus login SIASN terlebih dahulu.
-                                    <a href="{{ route('cms.siasn.index') }}" class="font-semibold underline hover:text-amber-900">Login SIASN →</a>
+                                    <a href="{{ route('cms.siasn.index') }}" class="font-semibold underline hover:text-amber-900">Login SIASN â†’</a>
                                 </p>
                             </div>
                         </div>
@@ -179,10 +183,10 @@
                                 <label for="kategori" class="block text-sm font-medium text-zinc-700">Kategori Surat</label>
                                 <select name="kategori" id="kategori" required
                                     class="mt-1 block w-full rounded-md border border-zinc-300 px-3 py-2.5 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100">
-                                    <option value="">— Pilih Kategori —</option>
+                                    <option value="">â€” Pilih Kategori â€”</option>
                                     @foreach ($kategoriList as $key => $kat)
                                         <option value="{{ $key }}" @selected(old('kategori') === $key)>
-                                            {{ $kat['label'] }} — {{ $kat['deskripsi'] }}
+                                            {{ $kat['label'] }} â€” {{ $kat['deskripsi'] }}
                                         </option>
                                     @endforeach
                                 </select>
@@ -259,7 +263,7 @@
                                 </div>
                                 <div class="flex items-start gap-2">
                                     <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-cyan-100 text-xs font-semibold text-cyan-700">4</span>
-                                    <p>Klik <strong>Generate & Download</strong> — file Word (.docx) akan otomatis terunduh.</p>
+                                    <p>Klik <strong>Generate & Download</strong> â€” file Word (.docx) akan otomatis terunduh.</p>
                                 </div>
                             </div>
 
@@ -301,3 +305,4 @@
     </script>
 </body>
 </html>
+

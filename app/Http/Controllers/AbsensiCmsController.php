@@ -10,6 +10,7 @@ use App\Models\AbsensiPppkReport;
 use App\Models\SiasnAbsensiLocationEmployee;
 use App\Services\AbsensiScraperService;
 use App\Services\PetaJabatanExcelService;
+use App\Services\PegawaiAnomalyService;
 use App\Services\SiasnPegawaiExcelImportService;
 use App\Services\TppScraperService;
 use Illuminate\Contracts\View\View;
@@ -26,7 +27,8 @@ class AbsensiCmsController extends Controller
         private readonly AbsensiScraperService $scraper,
         private readonly TppScraperService $tppScraper,
         private readonly PetaJabatanExcelService $petaJabatanExcel,
-        private readonly SiasnPegawaiExcelImportService $siasnPegawaiExcelImport
+        private readonly SiasnPegawaiExcelImportService $siasnPegawaiExcelImport,
+        private readonly PegawaiAnomalyService $pegawaiAnomaly
     )
     {
     }
@@ -214,6 +216,90 @@ class AbsensiCmsController extends Controller
             'skpdOptions' => $this->pegawaiSkpdOptions(),
             'result' => $result,
         ]);
+    }
+
+    public function analisaAnomali(Request $request): View
+    {
+        try {
+            $analysis = $this->pegawaiAnomaly->analyze();
+        } catch (\Throwable $exception) {
+            $analysis = [
+                'success' => false,
+                'message' => 'Error: ' . $exception->getMessage(),
+                'anomalies' => collect(),
+                'stats' => [],
+            ];
+        }
+
+        $anomalies = $analysis['anomalies'] ?? collect();
+
+        // Apply search filter
+        if ($request->filled('search')) {
+            $search = strtolower(trim((string) $request->input('search')));
+            $anomalies = $anomalies->filter(function (array $item) use ($search) {
+                return str_contains(strtolower($item['nip'] ?? ''), $search)
+                    || str_contains(strtolower($item['nama'] ?? ''), $search)
+                    || str_contains(strtolower($item['skpd'] ?? ''), $search)
+                    || str_contains(strtolower($item['jabatan'] ?? ''), $search)
+                    || str_contains(strtolower($item['primary_reason'] ?? ''), $search);
+            });
+        }
+
+        // Apply severity filter
+        if ($request->filled('severity')) {
+            $severity = (string) $request->input('severity');
+            $anomalies = $anomalies->filter(fn (array $item) => ($item['severity'] ?? '') === $severity);
+        }
+
+        // Paginate manually
+        $page = max(1, (int) $request->input('page', 1));
+        $perPage = 100;
+        $paginated = new LengthAwarePaginator(
+            $anomalies->forPage($page, $perPage)->values(),
+            $anomalies->count(),
+            $perPage,
+            $page,
+            ['path' => $request->url(), 'query' => $request->query()]
+        );
+
+        return view('absensi-cms.analisa-anomali', [
+            'anomalies' => $paginated,
+            'stats' => $analysis['stats'] ?? [],
+            'excelFile' => $analysis['excel_file'] ?? '-',
+            'success' => $analysis['success'] ?? false,
+            'message' => $analysis['message'] ?? '',
+            'result' => null,
+        ]);
+    }
+
+    public function deleteAnomaliPegawai(Request $request)
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer', 'min:1'],
+        ]);
+
+        try {
+            $deleted = $this->pegawaiAnomaly->deletePegawai($data['ids']);
+        } catch (\Throwable $exception) {
+            return redirect()->route('cms.analisa-anomali.index')
+                ->with('result', [
+                    'success' => false,
+                    'message' => 'Error: ' . $exception->getMessage(),
+                ]);
+        }
+
+        $totalDeleted = $deleted['absensi_pegawai'];
+        $message = "Berhasil menghapus {$totalDeleted} pegawai anomali. "
+            . "(AbsensiPegawai: {$deleted['absensi_pegawai']}, "
+            . "SiasnPnsProfile: {$deleted['siasn_pns_profiles']}, "
+            . "SiasnAbsensiLocationEmployee: {$deleted['siasn_absensi_location_employees']})";
+
+        return redirect()->route('cms.analisa-anomali.index')
+            ->with('result', [
+                'success' => true,
+                'message' => $message,
+            ]);
     }
 
     public function analisaAbsensi(Request $request): View

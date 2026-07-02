@@ -18,6 +18,8 @@ Route::prefix('cms')->name('cms.')->group(function () {
     Route::get('/pegawai', [AbsensiCmsController::class, 'pegawai'])->name('pegawai.index');
     Route::post('/pegawai/fetch', [AbsensiCmsController::class, 'fetchPegawai'])->name('pegawai.fetch');
     Route::post('/pegawai/import-siasn-excel', [AbsensiCmsController::class, 'importPegawaiSiasnExcel'])->name('pegawai.import-siasn-excel');
+    Route::get('/analisa-anomali', [AbsensiCmsController::class, 'analisaAnomali'])->name('analisa-anomali.index');
+    Route::post('/analisa-anomali/delete', [AbsensiCmsController::class, 'deleteAnomaliPegawai'])->name('analisa-anomali.delete');
     Route::get('/analisa-absensi', [AbsensiCmsController::class, 'analisaAbsensi'])->name('analisa-absensi.index');
     Route::get('/analisa-absensi/export', [AbsensiCmsController::class, 'exportAnalisaAbsensi'])->name('analisa-absensi.export');
     Route::get('/peta-jabatan-real', [AbsensiCmsController::class, 'petaJabatanReal'])->name('peta-jabatan-real.index');
